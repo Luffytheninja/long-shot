@@ -1,0 +1,2618 @@
+================================================================================
+LONG SHOT - COMPLETE CODEBASE & DOCUMENTATION FOR GAME TEAM
+Studio Ayo · Vatar / Lagos Life Integration
+================================================================================
+
+ARCHITECTURE SUMMARY & ROADMAP:
+- Platform: Lagos Life (Vatar Games SDK v1)
+- Host: Vercel Serverless (https://longshotminigame.vercel.app)
+- Physics: 120Hz fixed timestep accumulator loop in src/engine.js
+- RNG & Fair Play: Deterministic mulberry32 generator in src/rng.js
+- Economy & Consumables: Slow Time, Bonus Stones, Streak Shield, Second Chance in src/powerups.js
+- Audio: Zero-asset Web Audio API synthesizer in src/audio.js
+- Backend: Serverless purchase verification (api/claim.js) and 2xx Webhook (api/webhook.js)
+
+================================================================================
+FILE: index.html
+================================================================================
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#1a1a2e" />
+  <title>Long Shot</title>
+
+  <!-- Lagos Life Vatar Games SDK v1
+       Load from their CDN – never self-host a copy. -->
+  <script src="https://lagoslife.app/sdk/vatar-games-v1.js" onerror="console.warn('Vatar SDK not loaded – mock mode active')"></script>
+
+  <style>
+    /* ── Reset ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #1a1a2e;
+      /* Prevent text selection during drag */
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+    }
+
+    #game-canvas {
+      display: block;
+      /* Canvas fills the viewport; JS sets width/height to devicePixelRatio */
+      position: fixed;
+      top: 0; left: 0;
+      touch-action: none;
+    }
+
+    /* Loading screen shown until JS boots */
+    #loading {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #1a1a2e;
+      color: #ff9800;
+      font-family: "Segoe UI", sans-serif;
+      font-size: 1.5rem;
+      font-weight: bold;
+      letter-spacing: 0.08em;
+      z-index: 10;
+      transition: opacity 0.4s;
+    }
+    #loading.hidden { opacity: 0; pointer-events: none; }
+    #loading small {
+      display: block;
+      margin-top: 0.5rem;
+      color: #aaa;
+      font-size: 0.9rem;
+      font-weight: normal;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Loading splash (hidden once game boots) -->
+  <div id="loading">
+    LONG SHOT
+    <small>Loading…</small>
+  </div>
+
+  <canvas id="game-canvas"></canvas>
+
+  <!-- Game entry point – ES modules so all src/ files import cleanly -->
+  <script type="module">
+    import Game from './src/game.js';
+
+    const canvas  = document.getElementById('game-canvas');
+    const loading = document.getElementById('loading');
+
+    const hideLoading = () => {
+      loading.classList.add('hidden');
+      setTimeout(() => loading.remove(), 500);
+    };
+
+    try {
+      const game = new Game(canvas);
+      await game.init();
+    } catch (err) {
+      console.error('[Long Shot] Boot error:', err);
+    } finally {
+      // Always hide the loading screen — even if init() throws
+      hideLoading();
+    }
+  </script>
+</body>
+</html>
+
+
+================================================================================
+FILE: vercel.json
+================================================================================
+
+{
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "frame-ancestors https://lagoslife.app https://www.lagoslife.app https://naijalife.app https://www.naijalife.app https://lagoslife.eliysites.com"
+        }
+      ]
+    }
+  ]
+}
+
+
+================================================================================
+FILE: api/claim.js
+================================================================================
+
+/**
+ * api/claim.js – Serverless Function to verify and deliver purchases.
+ *
+ * Lagos Life (Vatar) Specification:
+ * 1. GET /purchases/<purchaseId> with Bearer $VATAR_SECRET (verifies purchase)
+ * 2. POST /purchases/<purchaseId>/deliver with Bearer $VATAR_SECRET (marks delivered)
+ */
+
+const VATAR_API_BASE = 'https://lagoslife.app/api/games/v1';
+
+module.exports = async function handler(req, res) {
+  // CORS & method check
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const secret = process.env.VATAR_SECRET;
+  if (!secret) {
+    console.error('[claim] Missing VATAR_SECRET in environment variables');
+    return res.status(500).json({ error: 'Server misconfigured: missing VATAR_SECRET' });
+  }
+
+  const { purchaseId, session } = req.body || {};
+  if (!purchaseId) {
+    console.warn('[claim] Missing purchaseId in request body:', req.body);
+    return res.status(400).json({ error: 'Missing purchaseId' });
+  }
+
+  console.log(`[claim] Verifying purchaseId: ${purchaseId}`);
+
+  const authHeaders = {
+    'Authorization': `Bearer ${secret}`,
+    'Content-Type': 'application/json',
+  };
+
+  try {
+    // 1. Fetch & verify purchase details from Vatar API
+    // This satisfies "A purchase verified by your server"
+    const purchaseRes = await fetch(`${VATAR_API_BASE}/purchases/${purchaseId}`, {
+      method: 'GET',
+      headers: authHeaders,
+    });
+
+    if (!purchaseRes.ok) {
+      const err = await purchaseRes.text();
+      console.error(`[claim] Error fetching purchase ${purchaseId}: ${purchaseRes.status}`, err);
+      return res.status(purchaseRes.status).json({ error: 'Purchase verification failed', details: err });
+    }
+
+    const purchase = await purchaseRes.json();
+    console.log(`[claim] Purchase verified:`, purchase);
+
+    // 2. Mark purchase as delivered
+    // This satisfies "One marked delivered"
+    const deliverRes = await fetch(`${VATAR_API_BASE}/purchases/${purchaseId}/deliver`, {
+      method: 'POST',
+      headers: authHeaders,
+    });
+
+    if (!deliverRes.ok) {
+      const err = await deliverRes.text();
+      console.error(`[claim] Error delivering purchase ${purchaseId}: ${deliverRes.status}`, err);
+      return res.status(deliverRes.status).json({ error: 'Failed to deliver purchase', details: err });
+    }
+
+    const deliverData = await deliverRes.json().catch(() => ({}));
+    console.log(`[claim] Purchase delivered successfully:`, deliverData);
+
+    return res.status(200).json({
+      success: true,
+      delivered: true,
+      purchaseId,
+      productId: purchase?.productId,
+    });
+
+  } catch (error) {
+    console.error('[claim] Internal error claiming purchase:', error);
+    return res.status(500).json({ error: 'Internal server error', message: error.message });
+  }
+};
+
+
+================================================================================
+FILE: api/webhook.js
+================================================================================
+
+/**
+ * api/webhook.js – Vercel Serverless Function to receive Vatar platform webhooks.
+ *
+ * Guarantees a fast 200 OK response (<50ms, no redirects) to tick
+ * the "Webhook answered 2xx" sandbox checklist box.
+ */
+
+module.exports = async function handler(req, res) {
+  // CORS & immediate headers
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Vatar-Signature');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
+  res.setHeader('Content-Type', 'application/json');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  // Answer 200 OK to any ping/verification probe
+  let body = req.body;
+  if (typeof body === 'string') {
+    try {
+      body = JSON.parse(body);
+    } catch (_) {}
+  }
+
+  const eventType = body?.type || body?.event || 'ping';
+  console.log(`[Vatar Webhook] Received ${req.method} event:`, eventType);
+
+  // Always return 200 OK immediately with no redirects
+  return res.status(200).json({
+    ok: true,
+    received: true,
+    service: 'Long Shot Webhook',
+    event: eventType,
+  });
+};
+
+
+================================================================================
+FILE: src/constants.js
+================================================================================
+
+/**
+ * constants.js – single source of truth for all game tuning numbers.
+ *
+ * World coordinate system:
+ *   - The play field is 100 units wide (WORLD_W).
+ *   - Heights are proportional so portrait phones stay fair.
+ *   - Pixels-per-unit is computed at runtime from canvas size.
+ */
+
+// ─── World dimensions ────────────────────────────────────────────────────────
+export const WORLD_W = 100;      // world units across the screen
+export const WORLD_H = 216;      // world units tall (≈ 375×812 ratio)
+
+// ─── Physics ─────────────────────────────────────────────────────────────────
+export const GRAVITY        = 42;   // world units / s² (downward)
+export const FIXED_DT       = 1 / 120; // seconds per physics tick
+export const MAX_DRAG       = 26;   // world units – generous thumb stroke on mobile (was 14)
+export const MIN_SPEED      = 22;   // gentle minimum speed for close-up finesse
+export const MAX_SPEED      = 108;  // maximum speed needed to reach the highest bottle tier
+export const DRAG_EXPONENT  = 1.35; // progressive power curve (soft at low pull, ramps at deep pull)
+export const ROCK_RADIUS    = 1.2;  // world units
+
+// ─── Slingshot anchor ────────────────────────────────────────────────────────
+// Slingshot sits bottom-centre. Pouch rests at SLING_Y when idle.
+export const SLING_X        = 50;   // world units from left
+export const SLING_Y        = 185;  // world units from top (near bottom)
+export const FORK_SPREAD    = 4;    // half-width between fork tips (world units)
+export const FORK_HEIGHT    = 8;    // height of the Y-fork above anchor point
+
+// ─── Round rules ─────────────────────────────────────────────────────────────
+export const TOTAL_ROCKS    = 15;
+export const COMBO_STEP     = 0.25; // multiplier gained per consecutive hit
+export const MAX_MULTIPLIER = 2.0;
+export const STREAK_BONUS_AT = 5;  // hits in a row to earn the bonus
+export const STREAK_BONUS   = 50;  // flat bonus points
+
+// ─── Distance / difficulty tiers ─────────────────────────────────────────────
+// distance: shelf X position in world units from sling anchor
+// scale:    bottle visual scale (1 = full size)
+// points:   base points for a hit
+// stayStart: how long (s) a bottle stays at the START of the round
+// The stay time shrinks by up to 25% over the full round.
+export const TIERS = [
+  { id: 1, name: 'Close', distance: 8,  scale: 1.00, points: 10, stayStart: 4.0 },
+  { id: 2, name: 'Near',  distance: 14, scale: 0.80, points: 20, stayStart: 3.4 },
+  { id: 3, name: 'Mid',   distance: 22, scale: 0.62, points: 35, stayStart: 2.9 },
+  { id: 4, name: 'Far',   distance: 32, scale: 0.47, points: 55, stayStart: 2.4 },
+  { id: 5, name: 'Long',  distance: 45, scale: 0.35, points: 80, stayStart: 2.0 },
+];
+
+// ─── Difficulty ramp ──────────────────────────────────────────────────────────
+export const RAMP_DURATION  = 60;   // seconds over which tier weighting shifts easy→hard
+
+// ─── Trajectory preview ───────────────────────────────────────────────────────
+export const TRAJECTORY_SHOTS = Infinity;  // always show aim assist while dragging
+export const TRAJECTORY_DOTS  = 22;        // long preview arc across the screen (was 10)
+
+// ─── Bottle spawn timing ──────────────────────────────────────────────────────
+// One bottle at a time. Next spawns immediately after current is hit or expires.
+export const BOTTLE_STAY_MIN  = 4.5;  // seconds minimum on screen (+2s)
+export const BOTTLE_STAY_MAX  = 6.5;  // seconds maximum on screen (+2s)
+
+// ─── Horizontal spawn zones (world units) ────────────────────────────────────
+// Three zones: left / centre / right. Bottles are placed with jitter inside each zone.
+export const SPAWN_ZONES = [
+  { name: 'left',   xMin: 20, xMax: 36 },
+  { name: 'centre', xMin: 43, xMax: 57 },
+  { name: 'right',  xMin: 64, xMax: 80 },
+];
+
+// ─── Colours (placeholder art) ────────────────────────────────────────────────
+export const CLR_SKY        = '#1a1a2e';
+export const CLR_GROUND     = '#3d2c1e';
+export const CLR_SHELF      = '#5c4033';
+export const CLR_BOTTLE     = '#2e7d32';
+export const CLR_ROCK       = '#8d6e63';
+export const CLR_BAND       = '#795548';
+export const CLR_HIT        = '#ffeb3b';
+export const CLR_MISS       = '#ef5350';
+export const CLR_UI_BG      = 'rgba(0,0,0,0.72)';
+export const CLR_UI_TEXT    = '#ffffff';
+export const CLR_ACCENT     = '#ff9800';
+
+// ─── Power-up product catalogue ───────────────────────────────────────────────
+// Prices are test hypotheses; verify Vatar's price limits before going live.
+export const PRODUCTS = {
+  slow_time:      { id: 'slow_time',      name: 'Slow Time',      price: 100,  emoji: '🐢', desc: 'Bottles expire 35% slower for 4 s.' },
+  bonus_stones_3: { id: 'bonus_stones_3', name: '3 Bonus Stones', price: 100,  emoji: '🪨', desc: 'Adds 3 extra shots to your next round.' },
+  streak_shield:  { id: 'streak_shield',  name: 'Streak Shield',  price: 150,  emoji: '🛡', desc: 'One miss won\'t break your combo.' },
+  second_chance:  { id: 'second_chance',  name: 'Second Chance',  price: null, emoji: '⚡', desc: 'One extra shot after your last stone. Price rises per use.' },
+};
+
+// Second Chance escalating prices (₦) — index = number already used this run
+export const SECOND_CHANCE_PRICES     = [500, 1000, 3500, 5000];
+export const MAX_SECOND_CHANCES_PER_RUN = 4;
+
+// Slow Time
+export const SLOW_TIME_DURATION  = 4.0;   // seconds the effect lasts
+export const SLOW_TIME_FACTOR    = 0.65;  // bottle countdown ticks at 65% speed (35% slower)
+
+// Bonus Stones
+export const BONUS_STONES_PER_PACK = 3;
+
+// Hard cap on total shots per run (base 15 + bonuses + second chances)
+export const MAX_TOTAL_SHOTS = 25;
+
+
+
+================================================================================
+FILE: src/rng.js
+================================================================================
+
+/**
+ * rng.js – mulberry32 seeded pseudo-random number generator.
+ *
+ * Returns a function that yields deterministic floats in [0, 1).
+ * NEVER use Math.random() in gameplay logic – always use this.
+ *
+ * Usage:
+ *   import { makeRng, hashSeed } from './rng.js';
+ *   const rand = makeRng(hashSeed('bottle-2026-10-12'));
+ *   rand(); // → 0.someFloat
+ */
+
+export function makeRng(seed) {
+  return function () {
+    seed |= 0;
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * hashSeed – converts an arbitrary string to a 32-bit integer seed.
+ * Uses djb2 so it is simple, fast and stable across JS engines.
+ */
+export function hashSeed(str) {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) {
+    h = (Math.imul(h, 33) ^ str.charCodeAt(i)) | 0;
+  }
+  return h >>> 0;
+}
+
+/**
+ * dailySeed – returns today's deterministic seed (UTC date).
+ * Every player on the same UTC day gets the same seed.
+ */
+export function dailySeed() {
+  const d = new Date();
+  const key = `bottle-${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+  return hashSeed(key);
+}
+
+/**
+ * practiceSeed – returns a fresh random seed using the CSPRNG.
+ */
+export function practiceSeed() {
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return buf[0];
+}
+
+
+================================================================================
+FILE: src/audio.js
+================================================================================
+
+/**
+ * audio.js – synthesised sound engine (Web Audio API).
+ *
+ * All sounds are synthesised; no audio files are loaded.
+ * The AudioContext is created (and unlocked) on the first user gesture.
+ *
+ * Usage:
+ *   import AudioEngine from './audio.js';
+ *   const audio = new AudioEngine();
+ *   audio.unlock();       // call on first pointerdown
+ *   audio.playStretch(t); // 0..1 pull amount, call continuously while dragging
+ *   audio.playShoot();
+ *   audio.playHit(tierId);
+ *   audio.playMiss();
+ *   audio.playCombo(streak);
+ *   audio.playRoundEnd();
+ *   audio.mute() / audio.unmute();
+ */
+
+export default class AudioEngine {
+  constructor() {
+    this._ctx    = null;
+    this._muted  = false;
+    this._ready  = false;
+    this._stretchNode = null;
+  }
+
+  unlock() {
+    if (this._ready) return;
+    try {
+      this._ctx   = new (window.AudioContext || window.webkitAudioContext)();
+      this._ready = true;
+    } catch (_) { /* audio not available */ }
+  }
+
+  get ctx() { return this._ctx; }
+
+  mute()   { this._muted = true; }
+  unmute() { this._muted = false; }
+  get muted() { return this._muted; }
+
+  // ── Internal helpers ───────────────────────────────────────────────────────
+
+  _osc(type, freq, gain, duration, when = 0) {
+    if (!this._ready || this._muted) return;
+    const ctx = this._ctx;
+    const now = ctx.currentTime + when;
+    const osc = ctx.createOscillator();
+    const g   = ctx.createGain();
+    osc.connect(g); g.connect(ctx.destination);
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, now);
+    g.gain.setValueAtTime(gain, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + duration);
+    osc.start(now);
+    osc.stop(now + duration + 0.01);
+  }
+
+  _noise(gain, duration, filterFreq = 4000, when = 0) {
+    if (!this._ready || this._muted) return;
+    const ctx = this._ctx;
+    const now = ctx.currentTime + when;
+    const bufSize = ctx.sampleRate * duration;
+    const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < bufSize; i++) data[i] = Math.random() * 2 - 1;
+
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+
+    const filt = ctx.createBiquadFilter();
+    filt.type = 'highpass';
+    filt.frequency.value = filterFreq;
+
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(gain, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + duration);
+
+    src.connect(filt); filt.connect(g); g.connect(ctx.destination);
+    src.start(now);
+  }
+
+  // ── Public sounds ──────────────────────────────────────────────────────────
+
+  /**
+   * Band stretch – frequency rises with pull amount (0..1).
+   * Restarts the oscillator each frame while dragging; call with throttle.
+   */
+  playStretch(amount) {
+    if (!this._ready || this._muted) return;
+    const freq = 100 + amount * 300;
+    this._osc('sawtooth', freq, 0.04, 0.08);
+  }
+
+  /** Twang on release. */
+  playShoot() {
+    if (!this._ready || this._muted) return;
+    const ctx = this._ctx;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const g   = ctx.createGain();
+    osc.connect(g); g.connect(ctx.destination);
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(600, now);
+    osc.frequency.exponentialRampToValueAtTime(80, now + 0.25);
+    g.gain.setValueAtTime(0.3, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+    osc.start(now);
+    osc.stop(now + 0.31);
+    // Whoosh noise
+    this._noise(0.15, 0.4, 2000);
+  }
+
+  /**
+   * Glass shatter – 3 noise bursts at different pitches.
+   * @param {number} tierId – 1..5, used to vary pitch
+   */
+  playHit(tierId = 3) {
+    if (!this._ready || this._muted) return;
+    const base = 3000 + tierId * 800;
+    this._noise(0.5, 0.25, base,        0);
+    this._noise(0.35, 0.3, base * 0.6,  0.03);
+    this._noise(0.2,  0.4, base * 0.35, 0.07);
+    // Melodic tinkle
+    this._osc('sine', 2000 + tierId * 200, 0.1, 0.15, 0.05);
+  }
+
+  /** Dull thud for a miss. */
+  playMiss() {
+    this._osc('sine', 60, 0.4, 0.3);
+    this._noise(0.2, 0.2, 100);
+  }
+
+  /**
+   * Rising chime per streak step.
+   * @param {number} streak – consecutive hit count
+   */
+  playCombo(streak) {
+    const semitones = Math.min(streak, 8);
+    const freq = 440 * Math.pow(2, semitones / 12);
+    this._osc('sine', freq,      0.3, 0.15);
+    this._osc('sine', freq * 2,  0.1, 0.15, 0.05);
+  }
+
+  /** Round end fanfare. */
+  playRoundEnd() {
+    const notes = [523, 659, 784, 1047]; // C5 E5 G5 C6
+    notes.forEach((freq, i) => this._osc('sine', freq, 0.25, 0.5, i * 0.18));
+  }
+
+  /** UI tap click. */
+  playTap() {
+    this._osc('square', 1200, 0.08, 0.05);
+  }
+}
+
+
+================================================================================
+FILE: src/engine.js
+================================================================================
+
+/**
+ * engine.js – fixed-timestep physics loop, coordinate mapping, and renderer.
+ *
+ * World coords (100 × 216 units) are mapped to canvas pixels at runtime.
+ * Call Engine.resize() whenever the canvas dimensions change.
+ *
+ * Usage:
+ *   import Engine from './engine.js';
+ *   const eng = new Engine(canvasEl);
+ *   eng.start();           // begins the loop
+ *   eng.stop();            // pauses the loop
+ */
+
+import {
+  WORLD_W, WORLD_H, GRAVITY, FIXED_DT,
+  ROCK_RADIUS, SLING_X, SLING_Y, FORK_SPREAD, FORK_HEIGHT,
+  MAX_DRAG, MIN_SPEED, MAX_SPEED, DRAG_EXPONENT,
+  CLR_SKY, CLR_GROUND, CLR_SHELF, CLR_BOTTLE,
+  CLR_ROCK, CLR_BAND, CLR_HIT, CLR_ACCENT, CLR_UI_TEXT,
+  TIERS, TRAJECTORY_SHOTS, TRAJECTORY_DOTS,
+  TOTAL_ROCKS,
+} from './constants.js';
+
+// ─── Vector helpers ───────────────────────────────────────────────────────────
+function vec(x, y) { return { x, y }; }
+function vAdd(a, b) { return vec(a.x + b.x, a.y + b.y); }
+function vSub(a, b) { return vec(a.x - b.x, a.y - b.y); }
+function vScale(v, s) { return vec(v.x * s, v.y * s); }
+function vLen(v) { return Math.sqrt(v.x * v.x + v.y * v.y); }
+function vNorm(v) { const l = vLen(v) || 1; return vec(v.x / l, v.y / l); }
+
+// ─── Hit detection ────────────────────────────────────────────────────────────
+// Circle (rock) vs rectangle (bottle shelf area).
+function circleRect(cx, cy, cr, rx, ry, rw, rh) {
+  const nearX = Math.max(rx, Math.min(cx, rx + rw));
+  const nearY = Math.max(ry, Math.min(cy, ry + rh));
+  const dx = cx - nearX, dy = cy - nearY;
+  return dx * dx + dy * dy < cr * cr;
+}
+
+// ─── Particles ────────────────────────────────────────────────────────────────
+class Particle {
+  constructor(x, y, vx, vy, radius, colour, life) {
+    Object.assign(this, { x, y, vx, vy, radius, colour, life, maxLife: life });
+  }
+  update(dt) {
+    this.x += this.vx * dt;
+    this.y += this.vy * dt;
+    this.vy += GRAVITY * dt * 0.5;
+    this.life -= dt;
+  }
+  get alive() { return this.life > 0; }
+  get alpha() { return Math.max(0, this.life / this.maxLife); }
+}
+
+// ─── Engine ───────────────────────────────────────────────────────────────────
+export default class Engine {
+  constructor(canvas, { onRoundEnd, onHit, onMiss, onShoot } = {}) {
+    this.canvas  = canvas;
+    this.ctx     = canvas.getContext('2d');
+    this.onRoundEnd = onRoundEnd || (() => {});
+    this.onHit      = onHit      || (() => {});
+    this.onMiss     = onMiss     || (() => {});
+    this.onShoot    = onShoot    || (() => {});
+
+    this.ppu     = 1;      // pixels per world unit – set by resize()
+    this.offX    = 0;      // canvas x offset when letterboxing
+    this.offY    = 0;
+
+    // Game state
+    this.rocks      = [];
+    this.bottles    = [];     // managed by SpawnManager, passed in
+    this.particles  = [];
+    this.shakeTime  = 0;
+
+    // Drag state
+    this.dragging   = false;
+    this.dragStart  = null;   // world coords
+    this.dragCurrent= null;
+
+    // Running state
+    this.running    = false;
+    this._raf       = null;
+    this._acc       = 0;      // accumulated time for fixed step
+    this._last      = 0;
+
+    // Shot counter (for trajectory preview)
+    this.shotsFired = 0;
+
+    this._bindInput();
+    this.resize();
+  }
+
+  // ── Coordinate mapping ─────────────────────────────────────────────────────
+  resize() {
+    const cw = this.canvas.width;
+    const ch = this.canvas.height;
+    this.ppu  = Math.min(cw / WORLD_W, ch / WORLD_H);
+    this.offX = (cw - WORLD_W * this.ppu) / 2;
+    this.offY = (ch - WORLD_H * this.ppu) / 2;
+  }
+
+  // world → canvas pixel
+  wx(x) { return this.offX + x * this.ppu; }
+  wy(y) { return this.offY + y * this.ppu; }
+  wp(v) { return v * this.ppu; }
+
+  // canvas pixel → world
+  px(x) { return (x - this.offX) / this.ppu; }
+  py(y) { return (y - this.offY) / this.ppu; }
+
+  // ── Input ──────────────────────────────────────────────────────────────────
+  _getCanvasPos(e) {
+    const rect = this.canvas.getBoundingClientRect();
+    const clientX = e.clientX ?? (e.touches && e.touches[0] ? e.touches[0].clientX : 0);
+    const clientY = e.clientY ?? (e.touches && e.touches[0] ? e.touches[0].clientY : 0);
+    // Convert client CSS pixels directly to the canvas internal buffer resolution:
+    const scaleX = this.canvas.width / rect.width;
+    const scaleY = this.canvas.height / rect.height;
+    return {
+      x: (clientX - rect.left) * scaleX,
+      y: (clientY - rect.top) * scaleY,
+    };
+  }
+
+  _bindInput() {
+    const c = this.canvas;
+    const ev = (name, fn) => c.addEventListener(name, fn, { passive: false });
+
+    ev('pointerdown', (e) => {
+      if (!this.running) return;
+      e.preventDefault();
+      const pos = this._getCanvasPos(e);
+      const wx = this.px(pos.x), wy = this.py(pos.y);
+      // Grab radius: generous on phones (28 world units) so thumbs easily grab pouch
+      const d = vLen(vSub(vec(wx, wy), vec(SLING_X, SLING_Y)));
+      if (d < 28) {
+        this.dragging = true;
+        this.dragStart   = vec(SLING_X, SLING_Y);
+        this.dragCurrent = vec(wx, wy);
+        try { c.setPointerCapture(e.pointerId); } catch (_) {}
+      }
+    });
+
+    ev('pointermove', (e) => {
+      if (!this.dragging) return;
+      e.preventDefault();
+      const pos = this._getCanvasPos(e);
+      const wx = this.px(pos.x), wy = this.py(pos.y);
+      // Clamp drag distance to MAX_DRAG world units
+      const raw  = vSub(vec(wx, wy), this.dragStart);
+      const dist = Math.min(vLen(raw), MAX_DRAG);
+      const dir  = vNorm(raw);
+      this.dragCurrent = vAdd(this.dragStart, vScale(dir, dist));
+    });
+
+    const endDrag = (e) => {
+      if (!this.dragging) return;
+      e.preventDefault();
+      this._launch();
+      this.dragging    = false;
+      this.dragStart   = null;
+      this.dragCurrent = null;
+    };
+
+    ev('pointerup', endDrag);
+    ev('pointercancel', endDrag);
+  }
+
+  _getLaunchPhysics() {
+    if (!this.dragStart || !this.dragCurrent) return null;
+    const pull = vSub(this.dragStart, this.dragCurrent);
+    const dist = vLen(pull);
+    if (dist < 1.2) return null; // Dead-zone for accidental micro-taps
+
+    const dir = vNorm(pull);
+    // Normalized pull fraction (0.0 to 1.0)
+    const norm = Math.min(dist / MAX_DRAG, 1.0);
+    // Non-linear power ramp (starts soft & gentle, ramps with deep pull)
+    const powerCurve = Math.pow(norm, DRAG_EXPONENT);
+    const speed = MIN_SPEED + powerCurve * (MAX_SPEED - MIN_SPEED);
+
+    return { dir, speed, norm };
+  }
+
+  _launch() {
+    const phys = this._getLaunchPhysics();
+    if (!phys) return;
+
+    this.rocks.push({
+      x:  SLING_X,
+      y:  SLING_Y,
+      vx: phys.dir.x * phys.speed,
+      vy: phys.dir.y * phys.speed,
+      r:  ROCK_RADIUS,
+      landed: false,
+      hit:    false,
+    });
+
+    this.shotsFired++;
+    this.onShoot();
+  }
+
+  // ── Public API ─────────────────────────────────────────────────────────────
+  setBottles(arr) { this.bottles = arr; }
+
+  spawnShatterAt(x, y, colour) {
+    for (let i = 0; i < 12; i++) {
+      const angle = (Math.PI * 2 * i) / 12 + (Math.random() * 0.5);
+      const speed = 10 + Math.random() * 18;
+      this.particles.push(new Particle(
+        x, y,
+        Math.cos(angle) * speed,
+        Math.sin(angle) * speed - 5,
+        0.6 + Math.random() * 0.8,
+        colour,
+        0.6 + Math.random() * 0.4,
+      ));
+    }
+    this.shakeTime = 0.18;
+  }
+
+  start() {
+    if (this.running) return;
+    this.running = true;
+    this._last   = performance.now();
+    this._loop(this._last);
+  }
+
+  stop() {
+    this.running = false;
+    if (this._raf) cancelAnimationFrame(this._raf);
+  }
+
+  // ── Game loop ──────────────────────────────────────────────────────────────
+  _loop(now) {
+    if (!this.running) return;
+    this._raf = requestAnimationFrame((t) => this._loop(t));
+
+    const elapsed = Math.min((now - this._last) / 1000, 0.1); // cap at 100ms
+    this._last = now;
+    this._acc += elapsed;
+
+    while (this._acc >= FIXED_DT) {
+      this._tick(FIXED_DT);
+      this._acc -= FIXED_DT;
+    }
+
+    this._render();
+  }
+
+  _tick(dt) {
+    // Screen shake decay
+    if (this.shakeTime > 0) this.shakeTime -= dt;
+
+    // Update rocks
+    for (const rock of this.rocks) {
+      if (rock.landed) continue;
+      rock.vy += GRAVITY * dt;
+      rock.x  += rock.vx * dt;
+      rock.y  += rock.vy * dt;
+
+      // Check hit against all active bottles
+      for (const bottle of this.bottles) {
+        if (bottle.hit) continue;
+        const bw = 2.4 * bottle.tier.scale;
+        const bh = 6.0 * bottle.tier.scale;
+        const bx = bottle.x - bw / 2;
+        const by = bottle.y - bh;
+        if (circleRect(rock.x, rock.y, rock.r, bx, by, bw, bh)) {
+          bottle.hit = true;
+          rock.landed = true;
+          rock.hit    = true;
+          this.spawnShatterAt(bottle.x, bottle.y, CLR_HIT);
+          this.onHit(bottle.tier);
+          break;
+        }
+      }
+
+      // Out of bounds → landed as miss
+      if (!rock.landed && (rock.y > WORLD_H + 5 || rock.x < -5 || rock.x > WORLD_W + 5)) {
+        rock.landed = true;
+        this.onMiss();
+      }
+    }
+
+    // Remove landed rocks
+    this.rocks = this.rocks.filter(r => !r.landed);
+
+    // Particles
+    for (const p of this.particles) p.update(dt);
+    this.particles = this.particles.filter(p => p.alive);
+  }
+
+  // ── Rendering ──────────────────────────────────────────────────────────────
+  _render() {
+    const { ctx } = this;
+    const cw = this.canvas.width, ch = this.canvas.height;
+
+    // Screen shake offset
+    let sx = 0, sy = 0;
+    if (this.shakeTime > 0) {
+      sx = (Math.random() - 0.5) * 6;
+      sy = (Math.random() - 0.5) * 6;
+    }
+
+    ctx.save();
+    ctx.translate(sx, sy);
+
+    // Background
+    ctx.fillStyle = CLR_SKY;
+    ctx.fillRect(0, 0, cw, ch);
+
+    // Ground strip
+    ctx.fillStyle = CLR_GROUND;
+    ctx.fillRect(0, this.wy(WORLD_H - 8), cw, ch);
+
+    // Draw shelves and bottles
+    for (const bottle of this.bottles) {
+      if (bottle.hit) continue;
+      this._drawShelf(bottle);
+      this._drawBottle(bottle);
+    }
+
+    // Trajectory preview – always visible while dragging
+    if (this.dragging) {
+      this._drawTrajectory();
+    }
+
+    // Slingshot
+    this._drawSlingshot();
+
+    // Rocks in flight
+    for (const rock of this.rocks) {
+      if (rock.landed) continue;
+      ctx.beginPath();
+      ctx.arc(this.wx(rock.x), this.wy(rock.y), this.wp(rock.r), 0, Math.PI * 2);
+      ctx.fillStyle = '#8d6e63';
+      ctx.fill();
+      ctx.strokeStyle = '#5d4037';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+
+    // Particles
+    for (const p of this.particles) {
+      ctx.globalAlpha = p.alpha;
+      ctx.beginPath();
+      ctx.arc(this.wx(p.x), this.wy(p.y), this.wp(p.radius), 0, Math.PI * 2);
+      ctx.fillStyle = p.colour;
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    ctx.restore();
+  }
+
+  _drawSlingshot() {
+    const { ctx } = this;
+    const ax = this.wx(SLING_X), ay = this.wy(SLING_Y);
+    const topY = this.wy(SLING_Y - FORK_HEIGHT);
+    const lx   = this.wx(SLING_X - FORK_SPREAD);
+    const rx   = this.wx(SLING_X + FORK_SPREAD);
+
+    // Stick
+    ctx.strokeStyle = CLR_BAND;
+    ctx.lineWidth   = this.wp(1.2);
+    ctx.lineCap     = 'round';
+
+    // Left prong
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(lx, topY); ctx.stroke();
+    // Right prong
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(rx, topY); ctx.stroke();
+
+    // Band and pouch
+    const pouch = this.dragCurrent
+      ? vec(this.wx(this.dragCurrent.x), this.wy(this.dragCurrent.y))
+      : vec(ax, topY + this.wp(1));
+
+    ctx.strokeStyle = '#a1887f';
+    ctx.lineWidth   = this.wp(0.5);
+    // Left band
+    ctx.beginPath(); ctx.moveTo(lx, topY); ctx.lineTo(pouch.x, pouch.y); ctx.stroke();
+    // Right band
+    ctx.beginPath(); ctx.moveTo(rx, topY); ctx.lineTo(pouch.x, pouch.y); ctx.stroke();
+
+    // Pouch circle (rock)
+    ctx.beginPath();
+    ctx.arc(pouch.x, pouch.y, this.wp(ROCK_RADIUS), 0, Math.PI * 2);
+    ctx.fillStyle = '#8d6e63';
+    ctx.fill();
+    ctx.strokeStyle = '#5d4037';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  _drawTrajectory() {
+    const phys = this._getLaunchPhysics();
+    if (!phys) return;
+
+    let x = SLING_X, y = SLING_Y;
+    let vx = phys.dir.x * phys.speed, vy = phys.dir.y * phys.speed;
+    const dt = 0.04;
+
+    const { ctx } = this;
+    for (let i = 0; i < TRAJECTORY_DOTS; i++) {
+      // Simulate trajectory physics steps
+      for (let s = 0; s < 2; s++) {
+        vy += GRAVITY * dt;
+        x  += vx * dt;
+        y  += vy * dt;
+      }
+
+      // Stop drawing if the dot goes off-screen
+      if (y > WORLD_H || x < 0 || x > WORLD_W) break;
+
+      const alpha = Math.max(0.15, 1 - (i / TRAJECTORY_DOTS) * 0.85);
+      const dotRadius = Math.max(0.5, 0.95 - (i / TRAJECTORY_DOTS) * 0.35);
+
+      ctx.globalAlpha = alpha * 0.8;
+      ctx.beginPath();
+      ctx.arc(this.wx(x), this.wy(y), this.wp(dotRadius), 0, Math.PI * 2);
+      ctx.fillStyle = CLR_ACCENT;
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  _drawShelf(bottle) {
+    const { ctx } = this;
+    const sx    = bottle.x;
+    const sy    = bottle.y;
+    const sw    = 8  * bottle.tier.scale;
+    const sh    = 1.2 * bottle.tier.scale;
+    ctx.fillStyle = CLR_SHELF;
+    ctx.fillRect(this.wx(sx - sw / 2), this.wy(sy), this.wp(sw), this.wp(sh));
+  }
+
+  _drawBottle(bottle) {
+    const { ctx } = this;
+    const sc = bottle.tier.scale;
+    const bw = 2.4 * sc;
+    const bh = 6.0 * sc;
+    const bx = this.wx(bottle.x - bw / 2);
+    const by = this.wy(bottle.y - bh);
+    const pw = this.wp(bw);
+    const ph = this.wp(bh);
+
+    // Body
+    ctx.fillStyle = '#2e7d32';
+    ctx.beginPath();
+    ctx.roundRect(bx, by + ph * 0.15, pw, ph * 0.85, this.wp(sc * 0.5));
+    ctx.fill();
+
+    // Neck
+    ctx.fillStyle = '#1b5e20';
+    ctx.fillRect(bx + pw * 0.3, by, pw * 0.4, ph * 0.2);
+
+    // Highlight
+    ctx.fillStyle = 'rgba(255,255,255,0.15)';
+    ctx.fillRect(bx + pw * 0.15, by + ph * 0.2, pw * 0.2, ph * 0.5);
+
+    // Distance label (small, during development)
+    if (sc > 0.5) {
+      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      ctx.font = `${Math.round(this.wp(sc * 2))}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.fillText(`L${bottle.tier.id}`, this.wx(bottle.x), this.wy(bottle.y - bh / 2));
+    }
+  }
+}
+
+
+================================================================================
+FILE: src/spawnManager.js
+================================================================================
+
+/**
+ * spawnManager.js – one-bottle-at-a-time seeded spawn controller.
+ *
+ * Rules:
+ *  - Only one bottle is ever on screen.
+ *  - A bottle stays for BOTTLE_STAY_MIN..BOTTLE_STAY_MAX seconds.
+ *  - The next bottle spawns immediately after the current one is hit or expires.
+ *  - Horizontal position cycles through a biased shuffle of left / centre / right zones.
+ *    The shuffle guarantees no two consecutive bottles appear in the same zone,
+ *    and isn't purely sequential either (uses the seeded RNG to order within each cycle).
+ *  - Tier (distance / difficulty) ramps from easy to hard over the round,
+ *    using the same seeded RNG so the full round is reproducible.
+ */
+
+import {
+  TIERS, WORLD_H,
+  BOTTLE_STAY_MIN, BOTTLE_STAY_MAX,
+  SPAWN_ZONES,
+  RAMP_DURATION,
+} from './constants.js';
+
+export default class SpawnManager {
+  /**
+   * @param {function} rand   – mulberry32 generator bound to the round seed
+   * @param {Engine}   engine – reference to call engine.setBottles()
+   */
+  constructor(rand, engine) {
+    this.rand    = rand;
+    this.engine  = engine;
+    this.active  = null;   // single active bottle (or null)
+    this.elapsed = 0;      // seconds since round start
+    this.running = false;
+
+    // Zone shuffle state
+    this._zoneDeck   = [];     // remaining zones in current shuffle cycle
+    this._lastZoneIdx= -1;     // index of last used zone (to prevent repeats)
+  }
+
+  start() {
+    this.active       = null;
+    this.elapsed      = 0;
+    this.running      = true;
+    this._zoneDeck    = [];
+    this._lastZoneIdx = -1;
+    this._spawn();             // spawn first bottle immediately
+    this._syncEngine();
+  }
+
+  stop() {
+    this.running = false;
+  }
+
+  /**
+   * Call every frame with elapsed delta seconds.
+   * @param {number} dt
+   * @param {number} slowFactor (optional: 0.65 for slow time, 1.0 normal)
+   */
+  update(dt, slowFactor = 1.0) {
+    if (!this.running) return;
+    this.elapsed += dt * slowFactor;
+
+    if (this.active) {
+      if (this.active.hit) {
+        // Bottle was hit – spawn next immediately
+        this.active = null;
+        this._spawn();
+      } else {
+        this.active.timeLeft -= dt * slowFactor;
+        if (this.active.timeLeft <= 0) {
+          // Bottle expired – spawn next immediately
+          this.active = null;
+          this._spawn();
+        }
+      }
+    }
+
+    this._syncEngine();
+  }
+
+  // ── Private ────────────────────────────────────────────────────────────────
+
+  /** Pick next zone index using biased shuffle (never same zone twice in a row). */
+  _nextZoneIdx() {
+    // Refill deck when empty
+    if (this._zoneDeck.length === 0) {
+      // Build [0,1,2] and Fisher-Yates shuffle with seeded RNG
+      const indices = SPAWN_ZONES.map((_, i) => i);
+      for (let i = indices.length - 1; i > 0; i--) {
+        const j = Math.floor(this.rand() * (i + 1));
+        [indices[i], indices[j]] = [indices[j], indices[i]];
+      }
+      // If the first item in the new deck is the same as last zone used,
+      // swap it with a random other item to avoid consecutive repeat at cycle boundary.
+      if (indices[0] === this._lastZoneIdx && indices.length > 1) {
+        const swapWith = 1 + Math.floor(this.rand() * (indices.length - 1));
+        [indices[0], indices[swapWith]] = [indices[swapWith], indices[0]];
+      }
+      this._zoneDeck = indices;
+    }
+
+    const idx = this._zoneDeck.shift();
+    this._lastZoneIdx = idx;
+    return idx;
+  }
+
+  /** Choose difficulty tier based on how far into the round we are. */
+  _chooseTier() {
+    const t = Math.min(this.elapsed / RAMP_DURATION, 1); // 0 → 1
+    // Weights peak near the current ramp position across the 5 tiers
+    const weights = TIERS.map((_, i) => {
+      const base = i / (TIERS.length - 1); // 0 → 1
+      return 0.15 + 0.85 * (1 - Math.abs(base - t));
+    });
+    const total = weights.reduce((a, b) => a + b, 0);
+    let r = this.rand() * total;
+    for (let i = 0; i < TIERS.length; i++) {
+      r -= weights[i];
+      if (r <= 0) return TIERS[i];
+    }
+    return TIERS[TIERS.length - 1];
+  }
+
+  _spawn() {
+    const tier    = this._chooseTier();
+    const zoneIdx = this._nextZoneIdx();
+    const zone    = SPAWN_ZONES[zoneIdx];
+
+    // X: random inside the chosen zone
+    const x = zone.xMin + this.rand() * (zone.xMax - zone.xMin);
+
+    // Y: based on tier – closer tiers sit lower, farther tiers sit higher
+    // Tier 1 (Close) ≈ 65% of world height, Tier 5 (Long) ≈ 35%
+    const baseYFrac = 0.65 - (tier.id - 1) * 0.07;
+    const yJitter   = (this.rand() - 0.5) * 5;
+    const y = WORLD_H * baseYFrac + yJitter;
+
+    // Stay time: min 2.5 s, max 4.5 s, randomised with seed
+    const stayTime = BOTTLE_STAY_MIN + this.rand() * (BOTTLE_STAY_MAX - BOTTLE_STAY_MIN);
+
+    this.active = {
+      id:       `b-${Date.now()}-${Math.floor(this.rand() * 9999)}`,
+      tier,
+      zone:     zone.name,
+      x,
+      y,
+      timeLeft: stayTime,
+      hit:      false,
+    };
+  }
+
+  _syncEngine() {
+    // Engine expects an array; wrap single bottle (or empty)
+    this.engine.setBottles(this.active ? [this.active] : []);
+  }
+}
+
+
+================================================================================
+FILE: src/scoring.js
+================================================================================
+
+/**
+ * scoring.js – combo multiplier, streak bonus, and round score state.
+ *
+ * Usage:
+ *   const s = new Scoring();
+ *   s.onHit(tier);   // returns { points, multiplier, comboText }
+ *   s.onMiss();
+ *   s.summary();     // call at round end
+ */
+
+import {
+  COMBO_STEP, MAX_MULTIPLIER,
+  STREAK_BONUS_AT, STREAK_BONUS,
+  TOTAL_ROCKS,
+} from './constants.js';
+
+export default class Scoring {
+  constructor() {
+    this.reset();
+  }
+
+  reset() {
+    this.score        = 0;
+    this.multiplier   = 1.0;
+    this.combo        = 0;       // current consecutive hits
+    this.bestStreak   = 0;
+    this.hits         = 0;
+    this.misses       = 0;
+    this.rocksLeft    = TOTAL_ROCKS;
+    this.roundOver    = false;
+  }
+
+  /**
+   * Called when a rock hits a bottle.
+   * @param {object} tier – the TIERS entry for the hit bottle
+   * @returns {{ points: number, multiplier: number, bonus: number, comboText: string }}
+   */
+  onHit(tier) {
+    const basePoints = tier.points;
+    const earned = Math.round(basePoints * this.multiplier);
+    let bonus = 0;
+
+    this.score   += earned;
+    this.combo++;
+    this.hits++;
+    this.bestStreak = Math.max(this.bestStreak, this.combo);
+
+    // Multiplier steps up
+    this.multiplier = Math.min(MAX_MULTIPLIER, 1 + this.combo * COMBO_STEP);
+
+    // Streak bonus at multiples of STREAK_BONUS_AT
+    if (this.combo % STREAK_BONUS_AT === 0) {
+      bonus = STREAK_BONUS;
+      this.score += bonus;
+    }
+
+    const comboText = this.combo >= 2 ? `×${this.multiplier.toFixed(2)}` : '';
+
+    return { points: earned, multiplier: this.multiplier, bonus, comboText };
+  }
+
+  /**
+   * Called when a rock lands without hitting a bottle.
+   * @param {boolean} protectedByShield - if true, shield prevents combo reset
+   */
+  onMiss(protectedByShield = false) {
+    if (!protectedByShield) {
+      this.combo      = 0;
+      this.multiplier = 1.0;
+    }
+    this.misses++;
+  }
+
+  /**
+   * Adds stones to the current round (Bonus Stones or Second Chance).
+   * @param {number} count
+   */
+  addRocks(count) {
+    this.rocksLeft += count;
+    this.roundOver = false;
+  }
+
+  /**
+   * Called when a rock is fired (decrements rock count, triggers round end).
+   * @returns {boolean} true if the round is now over
+   */
+  onShoot() {
+    this.rocksLeft--;
+    if (this.rocksLeft <= 0) {
+      this.roundOver = true;
+      return true;
+    }
+    return false;
+  }
+
+  get accuracy() {
+    const total = this.hits + this.misses;
+    return total > 0 ? Math.round((this.hits / total) * 100) : 0;
+  }
+
+  summary() {
+    return {
+      score:      this.score,
+      hits:       this.hits,
+      misses:     this.misses,
+      accuracy:   this.accuracy,
+      bestStreak: this.bestStreak,
+    };
+  }
+}
+
+
+================================================================================
+FILE: src/powerups.js
+================================================================================
+
+/**
+ * powerups.js – Inventory, Run State, and Assist Rules for Long Shot.
+ *
+ * Implements Studio Ayo design proposal:
+ * - Consumables: Slow Time, Bonus Stones (3 pack), Second Chance, Streak Shield
+ * - Escalating Second Chance pricing per run: [500, 1000, 3500, 5000] (₦)
+ * - Transparent run assists tracking
+ * - Enforces MAX_TOTAL_SHOTS (25) cap
+ */
+
+import {
+  PRODUCTS,
+  SECOND_CHANCE_PRICES,
+  MAX_SECOND_CHANCES_PER_RUN,
+  SLOW_TIME_DURATION,
+  SLOW_TIME_FACTOR,
+  BONUS_STONES_PER_PACK,
+  MAX_TOTAL_SHOTS,
+  TOTAL_ROCKS,
+} from './constants.js';
+
+const INVENTORY_STORAGE_KEY = 'longshot_inventory_v1';
+
+export default class PowerUpManager {
+  constructor() {
+    this.inventory = this._loadInventory();
+
+    // Active Run State (reset on every new run)
+    this.runId = null;
+    this.secondChancesUsed = 0;
+    this.bonusStonesUsed = 0;
+    this.assistsUsed = {
+      slowTime: 0,
+      bonusStones: 0,
+      secondChance: 0,
+      streakShield: 0,
+    };
+
+    // Active in-game timers / states
+    this.slowTimeTimer = 0; // seconds remaining of Slow Time
+    this.streakShieldActive = false; // whether active for the next miss
+  }
+
+  // ── Inventory Persistence ──────────────────────────────────────────────────
+
+  _loadInventory() {
+    try {
+      const raw = localStorage.getItem(INVENTORY_STORAGE_KEY);
+      if (raw) return JSON.parse(raw);
+    } catch (_) {}
+    return {
+      slow_time: 1,      // Give 1 free starter for test/playtest
+      bonus_stones_3: 1, // 1 starter pack
+      streak_shield: 1,  // 1 starter shield
+    };
+  }
+
+  _saveInventory() {
+    try {
+      localStorage.setItem(INVENTORY_STORAGE_KEY, JSON.stringify(this.inventory));
+    } catch (_) {}
+  }
+
+  grantItem(productId, quantity = 1) {
+    this.inventory[productId] = (this.inventory[productId] || 0) + quantity;
+    this._saveInventory();
+  }
+
+  hasItem(productId) {
+    return (this.inventory[productId] || 0) > 0;
+  }
+
+  consumeItem(productId, quantity = 1) {
+    if (!this.hasItem(productId)) return false;
+    this.inventory[productId] = Math.max(0, (this.inventory[productId] || 0) - quantity);
+    this._saveInventory();
+    return true;
+  }
+
+  // ── Run Lifecycle ──────────────────────────────────────────────────────────
+
+  startNewRun() {
+    this.runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    this.secondChancesUsed = 0;
+    this.bonusStonesUsed = 0;
+    this.assistsUsed = {
+      slowTime: 0,
+      bonusStones: 0,
+      secondChance: 0,
+      streakShield: 0,
+    };
+    this.slowTimeTimer = 0;
+    this.streakShieldActive = false;
+  }
+
+  // ── Slow Time ──────────────────────────────────────────────────────────────
+
+  get isSlowTimeActive() {
+    return this.slowTimeTimer > 0;
+  }
+
+  get slowTimeRemaining() {
+    return Math.max(0, this.slowTimeTimer);
+  }
+
+  get slowFactor() {
+    return this.isSlowTimeActive ? SLOW_TIME_FACTOR : 1.0;
+  }
+
+  activateSlowTime() {
+    if (this.isSlowTimeActive) return false;
+    if (!this.consumeItem('slow_time', 1)) return false;
+    this.slowTimeTimer = SLOW_TIME_DURATION;
+    this.assistsUsed.slowTime++;
+    return true;
+  }
+
+  update(dt) {
+    if (this.slowTimeTimer > 0) {
+      this.slowTimeTimer = Math.max(0, this.slowTimeTimer - dt);
+    }
+  }
+
+  // ── Streak Shield ──────────────────────────────────────────────────────────
+
+  activateStreakShield() {
+    if (this.streakShieldActive) return false;
+    if (!this.consumeItem('streak_shield', 1)) return false;
+    this.streakShieldActive = true;
+    this.assistsUsed.streakShield++;
+    return true;
+  }
+
+  // Called when a rock misses. If protected, consumes shield and returns true.
+  protectMiss() {
+    if (this.streakShieldActive) {
+      this.streakShieldActive = false;
+      return true; // combo protected!
+    }
+    return false;
+  }
+
+  // ── Bonus Stones (pre-run / mid-run ammo addition) ─────────────────────────
+
+  canUseBonusStones(currentTotalRocks) {
+    if (!this.hasItem('bonus_stones_3')) return false;
+    return (currentTotalRocks + BONUS_STONES_PER_PACK) <= MAX_TOTAL_SHOTS;
+  }
+
+  activateBonusStones(currentTotalRocks) {
+    if (!this.canUseBonusStones(currentTotalRocks)) return 0;
+    if (!this.consumeItem('bonus_stones_3', 1)) return 0;
+    this.bonusStonesUsed += BONUS_STONES_PER_PACK;
+    this.assistsUsed.bonusStones += BONUS_STONES_PER_PACK;
+    return BONUS_STONES_PER_PACK;
+  }
+
+  // ── Second Chance ──────────────────────────────────────────────────────────
+
+  get canBuySecondChance() {
+    return this.secondChancesUsed < MAX_SECOND_CHANCES_PER_RUN;
+  }
+
+  get nextSecondChancePrice() {
+    if (!this.canBuySecondChance) return null;
+    return SECOND_CHANCE_PRICES[this.secondChancesUsed] || 5000;
+  }
+
+  recordSecondChanceDelivered() {
+    this.secondChancesUsed++;
+    this.assistsUsed.secondChance++;
+  }
+
+  // ── Summary & Assists Transparency ─────────────────────────────────────────
+
+  get hasUsedAssists() {
+    return (
+      this.assistsUsed.slowTime > 0 ||
+      this.assistsUsed.bonusStones > 0 ||
+      this.assistsUsed.secondChance > 0 ||
+      this.assistsUsed.streakShield > 0
+    );
+  }
+
+  getAssistsSummary() {
+    const list = [];
+    if (this.assistsUsed.slowTime > 0) list.push(`🐢 Slow Time ×${this.assistsUsed.slowTime}`);
+    if (this.assistsUsed.bonusStones > 0) list.push(`🪨 Bonus Stones +${this.assistsUsed.bonusStones}`);
+    if (this.assistsUsed.secondChance > 0) list.push(`⚡ 2nd Chance ×${this.assistsUsed.secondChance}`);
+    if (this.assistsUsed.streakShield > 0) list.push(`🛡 Shield ×${this.assistsUsed.streakShield}`);
+    return {
+      hasAssists: this.hasUsedAssists,
+      list,
+      tag: this.hasUsedAssists ? '⚡ Assisted' : '🎯 Pure Run',
+      raw: { ...this.assistsUsed },
+    };
+  }
+}
+
+
+================================================================================
+FILE: src/ui.js
+================================================================================
+
+/**
+ * ui.js – Canvas overlay renderer for all screens.
+ *
+ * Handles:
+ *   - Start screen (Daily Challenge / Practice / Power-Up Shop)
+ *   - Shop screen (Consumables: Slow Time, Bonus Stones, Streak Shield)
+ *   - HUD (rocks left, score, combo, streak, Slow Time button, Shield status)
+ *   - Clutch screen (Second Chance offer with escalating price & Finish Run choice)
+ *   - Results screen (score, accuracy, streak, assists disclosure, play again)
+ *   - Leaderboard overlay
+ *   - Pause overlay
+ */
+
+import { TOTAL_ROCKS, CLR_UI_BG, CLR_UI_TEXT, CLR_ACCENT, PRODUCTS } from './constants.js';
+
+export default class UI {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.ctx    = canvas.getContext('2d');
+    this.screen = 'start';  // 'start' | 'game' | 'shop' | 'clutch' | 'results' | 'leaderboard' | 'paused'
+
+    // Callbacks set by Game
+    this.onDailyChallenge  = () => {};
+    this.onPractice        = () => {};
+    this.onRematch         = () => {};
+    this.onLeaderboard     = () => {};
+    this.onResume          = () => {};
+    this.onOpenShop        = () => {};
+    this.onCloseShop       = () => {};
+    this.onBuyProduct      = (id) => {};
+    this.onUseSlowTime     = () => {};
+    this.onUseBonusStones  = () => {};
+    this.onBuySecondChance = () => {};
+    this.onDeclineSecondChance = () => {};
+
+    // Data passed in
+    this.hud             = { rocksLeft: TOTAL_ROCKS, score: 0, combo: 0, multiplier: 1, streak: 0 };
+    this.results         = null;
+    this.player          = { name: 'Player', avatar: null };
+    this.bestDaily       = 0;
+    this.leaderboardData = null;
+
+    // Power-up state passed from PowerUpManager
+    this.powerUpState = {
+      inventory: {},
+      slowTimeActive: false,
+      slowTimeRemaining: 0,
+      streakShieldActive: false,
+      secondChancePrice: 500,
+      canBuySecondChance: true,
+      secondChancesUsed: 0,
+      assistsSummary: { hasAssists: false, list: [], tag: '🎯 Pure Run' },
+    };
+
+    // Hit flash text
+    this._flashes = [];   // [{ text, x, y, life, maxLife }]
+
+    this._buttons = [];   // clickable regions for current screen
+    this.canvas.addEventListener('pointerdown', (e) => this._handleClick(e));
+  }
+
+  // ── Public setters ─────────────────────────────────────────────────────────
+
+  setScreen(name)        { this.screen = name; this._buttons = []; }
+  setHUD(data)           { Object.assign(this.hud, data); }
+  setResults(r)          { this.results = r; }
+  setPlayer(p)           { this.player  = p; }
+  setBestDaily(n)        { this.bestDaily = n; }
+  setLeaderboard(d)      { this.leaderboardData = d; }
+  setPowerUpState(state) { Object.assign(this.powerUpState, state); }
+
+  addFlash(text, worldX, worldY, ppu, offX, offY) {
+    const px = offX + worldX * ppu;
+    const py = offY + worldY * ppu;
+    this._flashes.push({ text, x: px, y: py, life: 0.9, maxLife: 0.9 });
+  }
+
+  update(dt) {
+    this._flashes = this._flashes.filter(f => { f.life -= dt; return f.life > 0; });
+  }
+
+  // ── Main render ────────────────────────────────────────────────────────────
+
+  render() {
+    switch (this.screen) {
+      case 'start':       this._renderStart();        break;
+      case 'game':        this._renderHUD();          break;
+      case 'shop':        this._renderShop();         break;
+      case 'clutch':      this._renderClutch();       break;
+      case 'results':     this._renderResults();      break;
+      case 'leaderboard': this._renderLeaderboard();  break;
+      case 'paused':      this._renderPaused();       break;
+    }
+    this._renderFlashes();
+  }
+
+  // ── Screens ────────────────────────────────────────────────────────────────
+
+  _renderStart() {
+    const { ctx } = this;
+    const cw = this.canvas.width, ch = this.canvas.height;
+    this._buttons = [];
+
+    // Dark overlay
+    ctx.fillStyle = 'rgba(10,10,20,0.88)';
+    ctx.fillRect(0, 0, cw, ch);
+
+    // Title
+    ctx.fillStyle = CLR_ACCENT;
+    ctx.font      = `bold ${Math.round(cw * 0.14)}px "Segoe UI", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText('LONG SHOT', cw / 2, ch * 0.20);
+
+    ctx.fillStyle = '#aaa';
+    ctx.font      = `${Math.round(cw * 0.042)}px sans-serif`;
+    ctx.fillText('Slingshot Arcade · Lagos Life', cw / 2, ch * 0.255);
+
+    // Best daily score
+    if (this.bestDaily > 0) {
+      ctx.fillStyle = '#fff8';
+      ctx.font = `${Math.round(cw * 0.038)}px sans-serif`;
+      ctx.fillText(`Best today: ${this.bestDaily}`, cw / 2, ch * 0.30);
+    }
+
+    // Buttons
+    const btnW = cw * 0.72, btnH = ch * 0.072;
+    const dailyY = ch * 0.37;
+    const practY = ch * 0.47;
+    const shopY  = ch * 0.57;
+    const lbY    = ch * 0.67;
+
+    this._drawButton(cw / 2 - btnW / 2, dailyY, btnW, btnH, '📅  Daily Challenge', CLR_ACCENT, '#000');
+    this._registerButton(cw / 2 - btnW / 2, dailyY, btnW, btnH, () => this.onDailyChallenge());
+
+    this._drawButton(cw / 2 - btnW / 2, practY, btnW, btnH, '🎯  Practice', '#4caf50', '#fff');
+    this._registerButton(cw / 2 - btnW / 2, practY, btnW, btnH, () => this.onPractice());
+
+    this._drawButton(cw / 2 - btnW / 2, shopY, btnW, btnH, '🛍️  Power-Up Shop', '#9c27b0', '#fff');
+    this._registerButton(cw / 2 - btnW / 2, shopY, btnW, btnH, () => this.onOpenShop());
+
+    this._drawButton(cw / 2 - btnW / 2, lbY, btnW, btnH, '🏆  Leaderboard', '#1565c0', '#fff');
+    this._registerButton(cw / 2 - btnW / 2, lbY, btnW, btnH, () => this.onLeaderboard());
+
+    // Rules hint
+    ctx.fillStyle = '#666';
+    ctx.font      = `${Math.round(cw * 0.033)}px sans-serif`;
+    ctx.fillText('Drag back the slingshot · Release to fire', cw / 2, ch * 0.81);
+    ctx.fillText('15 rocks standard · Hit bottles to score', cw / 2, ch * 0.85);
+  }
+
+  _renderShop() {
+    const { ctx } = this;
+    const cw = this.canvas.width, ch = this.canvas.height;
+    this._buttons = [];
+
+    ctx.fillStyle = CLR_UI_BG;
+    ctx.fillRect(0, 0, cw, ch);
+
+    ctx.fillStyle = CLR_ACCENT;
+    ctx.font      = `bold ${Math.round(cw * 0.08)}px "Segoe UI", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText('🛍️ Power-Up Shop', cw / 2, ch * 0.10);
+
+    ctx.fillStyle = '#aaa';
+    ctx.font      = `${Math.round(cw * 0.036)}px sans-serif`;
+    ctx.fillText('Use in Practice & Daily · Assist tracked', cw / 2, ch * 0.14);
+
+    const items = [
+      { id: 'slow_time',      prod: PRODUCTS.slow_time },
+      { id: 'bonus_stones_3', prod: PRODUCTS.bonus_stones_3 },
+      { id: 'streak_shield',  prod: PRODUCTS.streak_shield },
+    ];
+
+    const cardW = cw * 0.86;
+    const cardH = ch * 0.16;
+    const startY = ch * 0.18;
+
+    items.forEach((item, index) => {
+      const p = item.prod;
+      const count = this.powerUpState.inventory[item.id] || 0;
+      const y = startY + index * (cardH + ch * 0.02);
+
+      // Card background
+      ctx.fillStyle = 'rgba(255,255,255,0.06)';
+      ctx.beginPath();
+      ctx.roundRect(cw / 2 - cardW / 2, y, cardW, cardH, 12);
+      ctx.fill();
+
+      // Emoji & Name
+      ctx.fillStyle = '#fff';
+      ctx.font      = `bold ${Math.round(cw * 0.046)}px "Segoe UI", sans-serif`;
+      ctx.textAlign = 'left';
+      ctx.fillText(`${p.emoji} ${p.name}`, cw / 2 - cardW / 2 + 16, y + cardH * 0.32);
+
+      // Inventory badge
+      ctx.fillStyle = count > 0 ? '#4caf50' : '#888';
+      ctx.font      = `bold ${Math.round(cw * 0.034)}px sans-serif`;
+      ctx.fillText(`Owned: ${count}`, cw / 2 - cardW / 2 + 16, y + cardH * 0.54);
+
+      // Description
+      ctx.fillStyle = '#aaa';
+      ctx.font      = `${Math.round(cw * 0.032)}px sans-serif`;
+      ctx.fillText(p.desc, cw / 2 - cardW / 2 + 16, y + cardH * 0.80);
+
+      // Buy button on right
+      const buyBtnW = cardW * 0.34;
+      const buyBtnH = cardH * 0.44;
+      const buyX = cw / 2 + cardW / 2 - buyBtnW - 12;
+      const buyY = y + cardH * 0.28;
+
+      this._drawButton(buyX, buyY, buyBtnW, buyBtnH, `Buy ₦${p.price}`, CLR_ACCENT, '#000');
+      this._registerButton(buyX, buyY, buyBtnW, buyBtnH, () => this.onBuyProduct(item.id));
+    });
+
+    // Close button
+    const closeBtnW = cw * 0.6;
+    const closeBtnH = ch * 0.065;
+    const closeY = ch * 0.86;
+    this._drawButton(cw / 2 - closeBtnW / 2, closeY, closeBtnW, closeBtnH, '← Back to Menu', '#333', '#fff');
+    this._registerButton(cw / 2 - closeBtnW / 2, closeY, closeBtnW, closeBtnH, () => this.onCloseShop());
+  }
+
+  _renderHUD() {
+    const { ctx } = this;
+    const cw = this.canvas.width, ch = this.canvas.height;
+    const { rocksLeft, score, multiplier, streak } = this.hud;
+    this._buttons = [];
+
+    // Top bar background
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(0, 0, cw, ch * 0.085);
+
+    // Score
+    ctx.fillStyle = '#fff';
+    ctx.font      = `bold ${Math.round(cw * 0.06)}px "Segoe UI", sans-serif`;
+    ctx.textAlign = 'left';
+    ctx.fillText(score, cw * 0.04, ch * 0.062);
+
+    // Multiplier
+    if (multiplier > 1) {
+      ctx.fillStyle = CLR_ACCENT;
+      ctx.font      = `bold ${Math.round(cw * 0.045)}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(`×${multiplier.toFixed(2)}`, cw * 0.5, ch * 0.062);
+    }
+
+    // Rocks left (right side)
+    ctx.fillStyle = '#fff';
+    ctx.font      = `${Math.round(cw * 0.042)}px sans-serif`;
+    ctx.textAlign = 'right';
+    ctx.fillText(`🪨 ${rocksLeft}`, cw * 0.96, ch * 0.062);
+
+    // Streak indicator (flame)
+    if (streak >= 3) {
+      ctx.fillStyle = '#ff5722';
+      ctx.font      = `bold ${Math.round(cw * 0.04)}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(`🔥 ${streak}`, cw * 0.5, ch * 0.115);
+    }
+
+    // ── In-Game Power-Up Shortcuts ───────────────────────────────────────────
+    const slowCount = this.powerUpState.inventory.slow_time || 0;
+    const shieldActive = this.powerUpState.streakShieldActive;
+    const shieldCount = this.powerUpState.inventory.streak_shield || 0;
+    const isSlow = this.powerUpState.slowTimeActive;
+
+    // Slow Time Button / Active Status Bar
+    const slowBtnW = cw * 0.38;
+    const slowBtnH = ch * 0.048;
+    const slowX = cw * 0.04;
+    const slowY = ch * 0.095;
+
+    if (isSlow) {
+      // Pulsing active bar
+      ctx.fillStyle = 'rgba(0, 188, 212, 0.85)';
+      ctx.beginPath();
+      ctx.roundRect(slowX, slowY, slowBtnW, slowBtnH, 8);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.font = `bold ${Math.round(cw * 0.034)}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(`🐢 Slow ${this.powerUpState.slowTimeRemaining.toFixed(1)}s`, slowX + slowBtnW / 2, slowY + slowBtnH * 0.68);
+    } else {
+      const bgCol = slowCount > 0 ? '#00838f' : 'rgba(255,255,255,0.15)';
+      const textCol = slowCount > 0 ? '#fff' : '#888';
+      this._drawButton(slowX, slowY, slowBtnW, slowBtnH, `🐢 Slow (${slowCount})`, bgCol, textCol);
+      if (slowCount > 0) {
+        this._registerButton(slowX, slowY, slowBtnW, slowBtnH, () => this.onUseSlowTime());
+      }
+    }
+
+    // Streak Shield Badge / Activation button
+    const shieldW = cw * 0.38;
+    const shieldH = ch * 0.048;
+    const shieldX = cw * 0.58;
+    const shieldY = ch * 0.095;
+
+    if (shieldActive) {
+      ctx.fillStyle = 'rgba(76, 175, 80, 0.9)';
+      ctx.beginPath();
+      ctx.roundRect(shieldX, shieldY, shieldW, shieldH, 8);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.font = `bold ${Math.round(cw * 0.034)}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText('🛡 Shield ON', shieldX + shieldW / 2, shieldY + shieldH * 0.68);
+    } else if (shieldCount > 0) {
+      this._drawButton(shieldX, shieldY, shieldW, shieldH, `🛡 Use Shield (${shieldCount})`, '#2e7d32', '#fff');
+      this._registerButton(shieldX, shieldY, shieldW, shieldH, () => this.onUseBonusStones('shield'));
+    }
+  }
+
+  // ── Clutch Screen: Second Chance Offer ───────────────────────────────────────
+  _renderClutch() {
+    const { ctx } = this;
+    const cw = this.canvas.width, ch = this.canvas.height;
+    this._buttons = [];
+
+    // Dark backdrop
+    ctx.fillStyle = 'rgba(10,10,25,0.92)';
+    ctx.fillRect(0, 0, cw, ch);
+
+    // Title
+    ctx.fillStyle = CLR_ACCENT;
+    ctx.font      = `bold ${Math.round(cw * 0.09)}px "Segoe UI", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText('⚡ SECOND CHANCE', cw / 2, ch * 0.22);
+
+    ctx.fillStyle = '#ddd';
+    ctx.font      = `${Math.round(cw * 0.042)}px sans-serif`;
+    ctx.fillText('Standard ammo exhausted!', cw / 2, ch * 0.29);
+
+    // Explanation & transparent price escalation disclosure
+    ctx.fillStyle = '#aaa';
+    ctx.font      = `${Math.round(cw * 0.036)}px sans-serif`;
+    ctx.fillText('Get 1 extra shot to extend your run.', cw / 2, ch * 0.36);
+    ctx.fillText('Price increases with each Second Chance in this run.', cw / 2, ch * 0.40);
+
+    const price = this.powerUpState.secondChancePrice;
+    const tierNum = this.powerUpState.secondChancesUsed + 1;
+    const canBuy = this.powerUpState.canBuySecondChance;
+
+    if (canBuy) {
+      // Price badge
+      ctx.fillStyle = 'rgba(255, 152, 0, 0.15)';
+      ctx.beginPath();
+      ctx.roundRect(cw * 0.15, ch * 0.46, cw * 0.7, ch * 0.08, 12);
+      ctx.fill();
+
+      ctx.fillStyle = CLR_ACCENT;
+      ctx.font      = `bold ${Math.round(cw * 0.052)}px sans-serif`;
+      ctx.fillText(`Next price (Use ${tierNum}/4): ₦${price}`, cw / 2, ch * 0.515);
+
+      // Buy button
+      const btnW = cw * 0.76;
+      const btnH = ch * 0.075;
+      const buyY = ch * 0.59;
+      this._drawButton(cw / 2 - btnW / 2, buyY, btnW, btnH, `⚡ Buy for ₦${price}`, CLR_ACCENT, '#000');
+      this._registerButton(cw / 2 - btnW / 2, buyY, btnW, btnH, () => this.onBuySecondChance());
+    } else {
+      ctx.fillStyle = '#ff5252';
+      ctx.font      = `bold ${Math.round(cw * 0.045)}px sans-serif`;
+      ctx.fillText('Maximum 4 Second Chances reached for this run.', cw / 2, ch * 0.48);
+    }
+
+    // Equal "Finish Run" button
+    const finishW = cw * 0.76;
+    const finishH = ch * 0.075;
+    const finishY = ch * 0.71;
+    this._drawButton(cw / 2 - finishW / 2, finishY, finishW, finishH, '🏁 Finish Run & View Results', '#444', '#fff');
+    this._registerButton(cw / 2 - finishW / 2, finishY, finishW, finishH, () => this.onDeclineSecondChance());
+  }
+
+  _renderResults() {
+    const { ctx } = this;
+    const cw = this.canvas.width, ch = this.canvas.height;
+    const r  = this.results || {};
+    this._buttons = [];
+
+    ctx.fillStyle = CLR_UI_BG;
+    ctx.fillRect(0, 0, cw, ch);
+
+    ctx.fillStyle = CLR_ACCENT;
+    ctx.font      = `bold ${Math.round(cw * 0.09)}px "Segoe UI", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText('Round Over!', cw / 2, ch * 0.12);
+
+    // Score
+    ctx.fillStyle = '#fff';
+    ctx.font      = `bold ${Math.round(cw * 0.14)}px "Segoe UI", sans-serif`;
+    ctx.fillText(r.score || 0, cw / 2, ch * 0.24);
+
+    // Assists tag
+    const assistSummary = this.powerUpState.assistsSummary || { hasAssists: false, tag: '🎯 Pure Run' };
+    ctx.fillStyle = assistSummary.hasAssists ? '#ffd54f' : '#81c784';
+    ctx.font      = `bold ${Math.round(cw * 0.038)}px sans-serif`;
+    ctx.fillText(assistSummary.tag, cw / 2, ch * 0.29);
+
+    // Stats grid
+    const stats = [
+      ['Accuracy',    `${r.accuracy || 0}%`],
+      ['Best Streak', `${r.bestStreak || 0} hits`],
+      ['Hits / Misses', `${r.hits || 0} / ${r.misses || 0}`],
+    ];
+    ctx.font = `${Math.round(cw * 0.038)}px sans-serif`;
+    stats.forEach(([label, val], i) => {
+      const y = ch * (0.34 + i * 0.055);
+      ctx.fillStyle = '#aaa';
+      ctx.textAlign = 'left';
+      ctx.fillText(label, cw * 0.12, y);
+      ctx.fillStyle = '#fff';
+      ctx.textAlign = 'right';
+      ctx.fillText(val, cw * 0.88, y);
+    });
+
+    // Assists breakdown if used
+    if (assistSummary.hasAssists && assistSummary.list?.length > 0) {
+      ctx.fillStyle = '#888';
+      ctx.font      = `${Math.round(cw * 0.032)}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(`Assists used: ${assistSummary.list.join(' · ')}`, cw / 2, ch * 0.54);
+    }
+
+    // Personal best notice
+    if (r.isPersonalBest) {
+      ctx.fillStyle = CLR_ACCENT;
+      ctx.font      = `bold ${Math.round(cw * 0.045)}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText('🏆 New Personal Best!', cw / 2, ch * 0.60);
+    }
+
+    // Buttons
+    const btnW = cw * 0.72, btnH = ch * 0.07;
+    const rematchY = ch * 0.68;
+    const lbY      = ch * 0.77;
+    const shopY    = ch * 0.86;
+
+    this._drawButton(cw / 2 - btnW / 2, rematchY, btnW, btnH, '🔁  Play Again', CLR_ACCENT, '#000');
+    this._registerButton(cw / 2 - btnW / 2, rematchY, btnW, btnH, () => this.onRematch());
+
+    this._drawButton(cw / 2 - btnW / 2, lbY, btnW, btnH, '🏆  Leaderboard', '#1565c0', '#fff');
+    this._registerButton(cw / 2 - btnW / 2, lbY, btnW, btnH, () => this.onLeaderboard());
+
+    this._drawButton(cw / 2 - btnW / 2, shopY, btnW, btnH, '🛍️  Power-Up Shop', '#9c27b0', '#fff');
+    this._registerButton(cw / 2 - btnW / 2, shopY, btnW, btnH, () => this.onOpenShop());
+  }
+
+  _renderLeaderboard() {
+    const { ctx } = this;
+    const cw = this.canvas.width, ch = this.canvas.height;
+    this._buttons = [];
+
+    ctx.fillStyle = CLR_UI_BG;
+    ctx.fillRect(0, 0, cw, ch);
+
+    ctx.fillStyle = CLR_ACCENT;
+    ctx.font      = `bold ${Math.round(cw * 0.07)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText('🏆 Leaderboard', cw / 2, ch * 0.1);
+
+    const entries = this.leaderboardData?.entries || [];
+    if (entries.length === 0) {
+      ctx.fillStyle = '#666';
+      ctx.font = `${Math.round(cw * 0.045)}px sans-serif`;
+      ctx.fillText('No scores yet. Be first!', cw / 2, ch * 0.5);
+    } else {
+      entries.slice(0, 10).forEach((e, i) => {
+        const y = ch * (0.18 + i * 0.065);
+        const isMe = e.playerId === this.player?.id;
+        ctx.fillStyle = isMe ? CLR_ACCENT : (i < 3 ? '#fff' : '#aaa');
+        ctx.font = `${isMe ? 'bold ' : ''}${Math.round(cw * 0.038)}px sans-serif`;
+        ctx.textAlign = 'left';
+        ctx.fillText(`${i + 1}. ${e.name}`, cw * 0.08, y);
+        ctx.textAlign = 'right';
+        ctx.fillText(e.score, cw * 0.92, y);
+      });
+    }
+
+    // Back button
+    const btnW = cw * 0.5, btnH = ch * 0.07;
+    const backY = ch * 0.88;
+    this._drawButton(cw / 2 - btnW / 2, backY, btnW, btnH, '← Back', '#333', '#fff');
+    this._registerButton(cw / 2 - btnW / 2, backY, btnW, btnH, () => this.onRematch());
+  }
+
+  _renderPaused() {
+    const { ctx } = this;
+    const cw = this.canvas.width, ch = this.canvas.height;
+    this._buttons = [];
+
+    ctx.fillStyle = 'rgba(0,0,0,0.8)';
+    ctx.fillRect(0, 0, cw, ch);
+
+    ctx.fillStyle = '#fff';
+    ctx.font      = `bold ${Math.round(cw * 0.1)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText('Paused', cw / 2, ch * 0.42);
+
+    const btnW = cw * 0.5, btnH = ch * 0.07;
+    const resumeY = ch * 0.55;
+    this._drawButton(cw / 2 - btnW / 2, resumeY, btnW, btnH, '▶ Resume', CLR_ACCENT, '#000');
+    this._registerButton(cw / 2 - btnW / 2, resumeY, btnW, btnH, () => this.onResume());
+  }
+
+  _renderFlashes() {
+    const { ctx } = this;
+    for (const f of this._flashes) {
+      ctx.globalAlpha = Math.max(0, f.life / f.maxLife);
+      ctx.fillStyle   = CLR_ACCENT;
+      ctx.font        = `bold ${Math.round(this.canvas.width * 0.05)}px sans-serif`;
+      ctx.textAlign   = 'center';
+      const drift = (1 - f.life / f.maxLife) * 20;
+      ctx.fillText(f.text, f.x, f.y - drift);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // ── Button helpers ─────────────────────────────────────────────────────────
+
+  _drawButton(x, y, w, h, label, bg, fg) {
+    const { ctx } = this;
+    ctx.fillStyle = bg;
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, h * 0.25);
+    ctx.fill();
+    ctx.fillStyle = fg;
+    ctx.font      = `bold ${Math.round(h * 0.42)}px "Segoe UI", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText(label, x + w / 2, y + h * 0.65);
+  }
+
+  _registerButton(x, y, w, h, callback) {
+    this._buttons.push({ x, y, w, h, callback });
+  }
+
+  _handleClick(e) {
+    const rect = this.canvas.getBoundingClientRect();
+    const clientX = e.clientX ?? (e.touches && e.touches[0] ? e.touches[0].clientX : 0);
+    const clientY = e.clientY ?? (e.touches && e.touches[0] ? e.touches[0].clientY : 0);
+    const scaleX = this.canvas.width / rect.width;
+    const scaleY = this.canvas.height / rect.height;
+    const bx = (clientX - rect.left) * scaleX;
+    const by = (clientY - rect.top) * scaleY;
+
+    for (const btn of this._buttons) {
+      if (bx >= btn.x && bx <= btn.x + btn.w && by >= btn.y && by <= btn.y + btn.h) {
+        btn.callback();
+        break;
+      }
+    }
+  }
+}
+
+
+================================================================================
+FILE: src/game.js
+================================================================================
+
+/**
+ * game.js – top-level game controller.
+ *
+ * Wires together: Engine, SpawnManager, Scoring, AudioEngine, UI, PowerUpManager, and SDK.
+ * Manages state transitions: start ↔ shop ↔ playing ↔ clutch ↔ results ↔ leaderboard.
+ */
+
+import Engine          from './engine.js';
+import SpawnManager    from './spawnManager.js';
+import Scoring         from './scoring.js';
+import AudioEngine     from './audio.js';
+import UI              from './ui.js';
+import PowerUpManager  from './powerups.js';
+import { boot }        from './sdk.js';
+import { makeRng, dailySeed, practiceSeed } from './rng.js';
+import { PRODUCTS, MAX_TOTAL_SHOTS } from './constants.js';
+
+const BEST_KEY_DAILY    = 'longshot_best_daily';
+const BEST_KEY_PRACTICE = 'longshot_best_practice';
+
+export default class Game {
+  constructor(canvas) {
+    this.canvas   = canvas;
+    this.engine   = new Engine(canvas, {
+      onHit:   (tier) => this._onHit(tier),
+      onMiss:  ()     => this._onMiss(),
+      onShoot: ()     => this._onShoot(),
+    });
+    this.scoring  = new Scoring();
+    this.audio    = new AudioEngine();
+    this.powerups = new PowerUpManager();
+    this.ui       = new UI(canvas);
+    this.spawn    = null;   // created per round
+
+    this.player   = null;
+    this.sdk      = null;
+    this.live     = false;
+
+    this.mode     = 'daily';   // 'daily' | 'practice'
+    this._audioUnlocked = false;
+    this._roundEnded    = false;
+
+    // UI event wiring
+    this.ui.onDailyChallenge      = () => { this.audio.playTap(); this._startRound('daily'); };
+    this.ui.onPractice            = () => { this.audio.playTap(); this._startRound('practice'); };
+    this.ui.onRematch             = () => { this.audio.playTap(); this._startRound(this.mode); };
+    this.ui.onLeaderboard         = () => { this.audio.playTap(); this._showLeaderboard(); };
+    this.ui.onResume              = () => { this.audio.playTap(); this._resume(); };
+    this.ui.onOpenShop            = () => { this.audio.playTap(); this._openShop(); };
+    this.ui.onCloseShop           = () => { this.audio.playTap(); this.ui.setScreen('start'); };
+    this.ui.onBuyProduct          = (id) => this._handleProductPurchase(id);
+    this.ui.onUseSlowTime         = () => this._activateSlowTime();
+    this.ui.onUseBonusStones      = (type) => this._activateInGameAssist(type);
+    this.ui.onBuySecondChance     = () => this._handleSecondChancePurchase();
+    this.ui.onDeclineSecondChance = () => { this.audio.playTap(); this._finalizeRound(); };
+
+    // Unlock audio on first touch
+    canvas.addEventListener('pointerdown', () => {
+      if (!this._audioUnlocked) {
+        this.audio.unlock();
+        this._audioUnlocked = true;
+      }
+    }, { once: false });
+
+    // Handle resize
+    window.addEventListener('resize', () => this._resize());
+    this._resize();
+
+    // RAF loop
+    this._rafId = null;
+    this._lastT = 0;
+  }
+
+  async init() {
+    const { player, live, sdk } = await boot();
+    this.player = player;
+    this.live   = live;
+    this.sdk    = sdk;
+
+    this.ui.setPlayer(player);
+    this.ui.setBestDaily(this._getBest(BEST_KEY_DAILY));
+    this._syncPowerUpState();
+
+    // Register platform pause/resume
+    sdk.onPause(()  => this._pause());
+    sdk.onResume(() => this._resume());
+
+    // Show start screen
+    this.ui.setScreen('start');
+    this._startLoop();
+  }
+
+  _syncPowerUpState() {
+    this.ui.setPowerUpState({
+      inventory:          { ...this.powerups.inventory },
+      slowTimeActive:     this.powerups.isSlowTimeActive,
+      slowTimeRemaining:  this.powerups.slowTimeRemaining,
+      streakShieldActive: this.powerups.streakShieldActive,
+      secondChancePrice:  this.powerups.nextSecondChancePrice,
+      canBuySecondChance: this.powerups.canBuySecondChance,
+      secondChancesUsed:  this.powerups.secondChancesUsed,
+      assistsSummary:     this.powerups.getAssistsSummary(),
+    });
+  }
+
+  _openShop() {
+    this._syncPowerUpState();
+    this.ui.setScreen('shop');
+  }
+
+  // ── Round lifecycle ────────────────────────────────────────────────────────
+
+  _startRound(mode) {
+    this.mode = mode;
+    this.scoring.reset();
+    this.powerups.startNewRun(); // Start new run with unique runId and clean Second Chance tier
+    this._syncPowerUpState();
+
+    this.engine.rocks      = [];
+    this.engine.bottles    = [];
+    this.engine.particles  = [];
+    this.engine.shotsFired = 0;
+
+    const seed = mode === 'daily' ? dailySeed() : practiceSeed();
+    const rand = makeRng(seed);
+
+    this.spawn = new SpawnManager(rand, this.engine);
+    this.spawn.start();
+
+    this.ui.setScreen('game');
+    this.engine.start();
+    this._updateHUD();
+  }
+
+  _onShoot() {
+    const over = this.scoring.onShoot();
+    this._updateHUD();
+    if (over) {
+      // Last rock fired: give 2.5s for it to hit/miss before entering clutch check
+      setTimeout(() => this._checkClutchOrEnd(), 2500);
+    }
+  }
+
+  _onHit(tier) {
+    const { points, bonus, comboText } = this.scoring.onHit(tier);
+    this.audio.playHit(tier.id);
+    if (this.scoring.combo >= 2) this.audio.playCombo(this.scoring.combo);
+
+    const flashX = 50 + (Math.random() - 0.5) * 20;
+    const flashY = 80;
+    const comboLabel = bonus > 0 ? `+${points} BONUS!` : comboText ? `+${points} ${comboText}` : `+${points}`;
+    this.ui.addFlash(comboLabel, flashX, flashY, this.engine.ppu, this.engine.offX, this.engine.offY);
+
+    this._updateHUD();
+    if (this.scoring.roundOver && this.engine.rocks.length === 0) {
+      this._checkClutchOrEnd();
+    }
+  }
+
+  _onMiss() {
+    // Check if Streak Shield protects this miss
+    const protectedByShield = this.powerups.protectMiss();
+    if (protectedByShield) {
+      this.audio.playCombo(3);
+      this.ui.addFlash('🛡 Streak Shielded!', 50, 100, this.engine.ppu, this.engine.offX, this.engine.offY);
+    } else {
+      this.audio.playMiss();
+    }
+
+    this.scoring.onMiss(protectedByShield);
+    this._syncPowerUpState();
+    this._updateHUD();
+
+    if (this.scoring.roundOver && this.engine.rocks.length === 0) {
+      this._checkClutchOrEnd();
+    }
+  }
+
+  // Offer Second Chance if rocks ran out and player hasn't capped out
+  _checkClutchOrEnd() {
+    if (this._roundEnded || this.scoring.rocksLeft > 0) return;
+
+    if (this.powerups.canBuySecondChance && this.engine.shotsFired < MAX_TOTAL_SHOTS) {
+      this.engine.stop();
+      this._syncPowerUpState();
+      this.ui.setScreen('clutch');
+    } else {
+      this._finalizeRound();
+    }
+  }
+
+  _finalizeRound() {
+    if (this._roundEnded) return;
+    this._roundEnded = true;
+
+    this.engine.stop();
+    this.spawn?.stop();
+    this.spawn = null;
+    this.audio.playRoundEnd();
+
+    const summary = this.scoring.summary();
+    const key = this.mode === 'daily' ? BEST_KEY_DAILY : BEST_KEY_PRACTICE;
+    const prev = this._getBest(key);
+    summary.isPersonalBest = summary.score > prev;
+    if (summary.isPersonalBest) this._saveBest(key, summary.score);
+
+    // Submit score to platform
+    if (this.live) this.sdk.submitScore(summary.score);
+
+    this._syncPowerUpState();
+    this.ui.setResults(summary);
+    this.ui.setScreen('results');
+
+    this._roundEnded = false;
+  }
+
+  // ── Power-Up In-Game Actions ───────────────────────────────────────────────
+
+  _activateSlowTime() {
+    if (this.powerups.activateSlowTime()) {
+      this.audio.playTap();
+      this.ui.addFlash('🐢 Slow Time Active (4s)!', 50, 100, this.engine.ppu, this.engine.offX, this.engine.offY);
+      this._syncPowerUpState();
+    }
+  }
+
+  _activateInGameAssist(type) {
+    if (type === 'shield' && this.powerups.activateStreakShield()) {
+      this.audio.playTap();
+      this.ui.addFlash('🛡 Shield Ready!', 50, 100, this.engine.ppu, this.engine.offX, this.engine.offY);
+      this._syncPowerUpState();
+    }
+  }
+
+  // ── Purchase Handlers ──────────────────────────────────────────────────────
+
+  async _handleProductPurchase(productId) {
+    try {
+      this.ui.addFlash('Contacting Vatar Store…', 50, 100, this.engine.ppu, this.engine.offX, this.engine.offY);
+      const res = await this.sdk.purchase(productId);
+      if (res?.success) {
+        this.audio.playCombo(4);
+        this.powerups.grantItem(productId, 1);
+        this._syncPowerUpState();
+        this.ui.addFlash(`🎉 ${PRODUCTS[productId]?.name || 'Item'} Delivered!`, 50, 100, this.engine.ppu, this.engine.offX, this.engine.offY);
+      }
+    } catch (err) {
+      console.error('Purchase failed:', err);
+      this.ui.addFlash('Purchase cancelled', 50, 100, this.engine.ppu, this.engine.offX, this.engine.offY);
+    }
+  }
+
+  async _handleSecondChancePurchase() {
+    try {
+      const price = this.powerups.nextSecondChancePrice;
+      const tierId = `second_chance_${this.powerups.secondChancesUsed + 1}`;
+      this.ui.addFlash(`Purchasing Second Chance (₦${price})…`, 50, 100, this.engine.ppu, this.engine.offX, this.engine.offY);
+
+      // Trigger purchase via Vatar SDK
+      const res = await this.sdk.purchase(tierId);
+      if (res?.success) {
+        this.audio.playCombo(5);
+        this.powerups.recordSecondChanceDelivered();
+        this.scoring.addRocks(1); // grant 1 extra shot
+        this._syncPowerUpState();
+        this.ui.addFlash('⚡ +1 Shot Granted! Back to Game', 50, 100, this.engine.ppu, this.engine.offX, this.engine.offY);
+
+        // Resume active gameplay
+        this.ui.setScreen('game');
+        this.engine.start();
+        this._updateHUD();
+      }
+    } catch (err) {
+      console.error('Second chance purchase failed:', err);
+      this.ui.addFlash('Purchase cancelled', 50, 100, this.engine.ppu, this.engine.offX, this.engine.offY);
+    }
+  }
+
+  async _showLeaderboard() {
+    this.ui.setScreen('leaderboard');
+    if (this.live) {
+      const data = await this.sdk.leaderboard();
+      if (data) this.ui.setLeaderboard(data);
+    }
+  }
+
+  _pause() {
+    this.engine.stop();
+    this.spawn?.stop();
+    this.audio.mute();
+    if (this.spawn !== null && this.ui.screen === 'game') {
+      this.ui.setScreen('paused');
+    }
+  }
+
+  _resume() {
+    if (this.spawn !== null && this.scoring.rocksLeft > 0 && !this.scoring.roundOver) {
+      this.engine.start();
+      this.spawn.running = true;
+      this.audio.unmute();
+      this.ui.setScreen('game');
+    } else {
+      this.ui.setScreen('start');
+    }
+  }
+
+  _updateHUD() {
+    this.ui.setHUD({
+      rocksLeft:  this.scoring.rocksLeft,
+      score:      this.scoring.score,
+      multiplier: this.scoring.multiplier,
+      streak:     this.scoring.combo,
+    });
+  }
+
+  _getBest(key) {
+    try { return parseInt(localStorage.getItem(key) || '0', 10) || 0; }
+    catch (_) { return 0; }
+  }
+
+  _saveBest(key, val) {
+    try { localStorage.setItem(key, String(val)); } catch (_) {}
+  }
+
+  _resize() {
+    const dpr  = window.devicePixelRatio || 1;
+    const vw   = window.innerWidth;
+    const vh   = window.innerHeight;
+    this.canvas.width  = vw  * dpr;
+    this.canvas.height = vh  * dpr;
+    this.canvas.style.width  = `${vw}px`;
+    this.canvas.style.height = `${vh}px`;
+    this.engine.resize();
+  }
+
+  _startLoop() {
+    this._lastT = performance.now();
+    const tick = (now) => {
+      const dt = Math.min((now - this._lastT) / 1000, 0.1);
+      this._lastT = now;
+
+      // Update power-up timers (Slow Time countdown)
+      this.powerups.update(dt);
+      if (this.powerups.isSlowTimeActive) {
+        this._syncPowerUpState();
+      }
+
+      // Update spawn manager with slowFactor applied
+      if (this.spawn && this.engine.running) {
+        this.spawn.update(dt, this.powerups.slowFactor);
+      }
+
+      // Update UI (flash texts) & render overlay
+      this.ui.update(dt);
+      this.ui.render();
+
+      this._rafId = requestAnimationFrame(tick);
+    };
+    this._rafId = requestAnimationFrame(tick);
+  }
+}
+
+
+================================================================================
+FILE: src/sdk.js
+================================================================================
+
+/**
+ * sdk.js – Lagos Life (Vatar Games SDK v1) wrapper with mock fallback.
+ *
+ * The SDK script is loaded from Lagos Life's CDN in index.html.
+ * If Vatar.init() throws "not_framed" (game is opened directly in a browser),
+ * we substitute a mock player so development works without the platform frame.
+ *
+ * Exports a single async boot() that resolves to { player, live, sdk }.
+ *
+ * Usage:
+ *   import { boot } from './sdk.js';
+ *   const { player, live, sdk } = await boot();
+ *   sdk.submitScore(score);
+ *   sdk.leaderboard();
+ *   sdk.onPause(cb);
+ *   sdk.onResume(cb);
+ */
+
+// ── Mock implementation ───────────────────────────────────────────────────────
+// Mirrors the real Vatar interface so the rest of the game can call sdk.* safely.
+
+let _lastSubmit = 0;
+let _lastLeaderboard = 0;
+
+const MOCK_PLAYER = {
+  id:     'local_dev',
+  name:   'You (dev)',
+  avatar: null,
+};
+
+function createMock() {
+  return {
+    submitScore(n) {
+      console.log(`[mock SDK] submitScore(${n})`);
+    },
+    async leaderboard() {
+      console.log('[mock SDK] leaderboard()');
+    },
+    async purchase(productId) {
+      console.log(`[mock SDK] purchase(${productId}) - test item unlocked`);
+      return { success: true, mock: true, productId };
+    },
+    onPause(cb)  { window.addEventListener('blur',  cb); },
+    onResume(cb) { window.addEventListener('focus', cb); },
+  };
+}
+
+// ── Real SDK wrapper ──────────────────────────────────────────────────────────
+
+function createReal(vatarPlayer, session) {
+  return {
+    submitScore(n) {
+      const now = Date.now();
+      if (now - _lastSubmit < 20_000) return; // throttle: once per 20 s
+      _lastSubmit = now;
+      if (typeof Vatar !== 'undefined') Vatar.submitScore(n);
+    },
+    async leaderboard() {
+      const now = Date.now();
+      if (now - _lastLeaderboard < 30_000) return null; // throttle: once per 30 s
+      _lastLeaderboard = now;
+      if (typeof Vatar !== 'undefined') return await Vatar.leaderboard();
+      return null;
+    },
+    async purchase(productId) {
+      if (typeof Vatar === 'undefined') throw new Error('Vatar SDK not available');
+      console.log(`[Long Shot] Calling Vatar.purchase("${productId}")...`);
+      // 1. Trigger Lagos Life purchase modal
+      const result = await Vatar.purchase(productId);
+      console.log('[Long Shot] Vatar.purchase result:', result);
+
+      // Support all response structures
+      const purchaseId =
+        result?.purchaseId ||
+        result?.id ||
+        result?.data?.purchaseId ||
+        result?.data?.id ||
+        (typeof result === 'string' ? result : null);
+
+      if (!purchaseId) {
+        console.warn('[Long Shot] No purchaseId returned in result:', result);
+        throw new Error('Purchase was cancelled or returned no purchaseId');
+      }
+
+      console.log(`[Long Shot] Sending /api/claim for purchaseId: ${purchaseId}...`);
+
+      // 2. Deliver via server /api/claim
+      const claimRes = await fetch('/api/claim', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ purchaseId, session }),
+      });
+
+      if (!claimRes.ok) {
+        const err = await claimRes.text();
+        console.error('[Long Shot] Server claim error:', err);
+        throw new Error(`Server claim failed: ${err}`);
+      }
+
+      const claimData = await claimRes.json();
+      console.log('[Long Shot] Server claim succeeded:', claimData);
+      return claimData;
+    },
+    onPause(cb)  { if (typeof Vatar !== 'undefined') Vatar.onPause(cb);  },
+    onResume(cb) { if (typeof Vatar !== 'undefined') Vatar.onResume(cb); },
+  };
+}
+
+// ── Boot ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Initialises the SDK (or mock). Always resolves; never rejects.
+ * @returns {Promise<{ player: object, live: boolean, sdk: object }>}
+ */
+export async function boot() {
+  try {
+    if (typeof Vatar === 'undefined') throw new Error('not_framed');
+    const initData = await Vatar.init();
+    const player = initData?.player || { id: 'unknown', name: 'Player' };
+    const session = initData?.session || null;
+    return { player, session, live: true, sdk: createReal(player, session) };
+  } catch (e) {
+    console.warn('[Long Shot] SDK not available – running in dev/mock mode:', e.message);
+    return { player: MOCK_PLAYER, session: null, live: false, sdk: createMock() };
+  }
+}
+
+
