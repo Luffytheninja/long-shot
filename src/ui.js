@@ -121,7 +121,7 @@ export default class UI {
     ctx.lineWidth = 3;
     ctx.stroke();
 
-    // Title in Danfo typography
+    // Title in Danfo typography (Hero Banner)
     ctx.fillStyle = THEME.danfoYellow;
     ctx.font      = `bold ${Math.round(cw * 0.13)}px ${THEME.fontDisplay}`;
     ctx.textAlign = 'center';
@@ -134,15 +134,15 @@ export default class UI {
     // Sound toggle at top right
     this._drawSoundToggle(cw * 0.84, ch * 0.03, cw * 0.12, cw * 0.12);
 
-    // Best daily score badge
+    // Best daily score badge – clean, highly readable font
     if (this.bestDaily > 0) {
       ctx.fillStyle = 'rgba(245, 184, 0, 0.2)';
       ctx.beginPath();
-      ctx.roundRect(cw * 0.25, ch * 0.28, cw * 0.5, ch * 0.045, 8);
+      ctx.roundRect(cw * 0.22, ch * 0.28, cw * 0.56, ch * 0.045, 8);
       ctx.fill();
 
       ctx.fillStyle = THEME.danfoYellow;
-      ctx.font = `bold ${Math.round(cw * 0.038)}px ${THEME.fontDisplay}`;
+      ctx.font = `bold ${Math.round(cw * 0.038)}px ${THEME.fontBody}`;
       ctx.fillText(`BEST TODAY: ${this.bestDaily}`, cw / 2, ch * 0.312);
     }
 
@@ -153,16 +153,16 @@ export default class UI {
     const shopY  = ch * 0.53;
     const lbY    = ch * 0.62;
 
-    this._drawWoodBtn(cw / 2 - btnW / 2, dailyY, btnW, btnH, 'DAILY CHALLENGE', true, '📅');
+    this._drawWoodBtn(cw / 2 - btnW / 2, dailyY, btnW, btnH, 'Daily Challenge', true, '📅');
     this._registerButton(cw / 2 - btnW / 2, dailyY, btnW, btnH, () => this.onDailyChallenge());
 
-    this._drawWoodBtn(cw / 2 - btnW / 2, practY, btnW, btnH, 'PRACTICE WALL', false, '🎯');
+    this._drawWoodBtn(cw / 2 - btnW / 2, practY, btnW, btnH, 'Practice Wall', false, '🎯');
     this._registerButton(cw / 2 - btnW / 2, practY, btnW, btnH, () => this.onPractice());
 
-    this._drawWoodBtn(cw / 2 - btnW / 2, shopY, btnW, btnH, 'BOOST SHOP', false, '🛍️');
+    this._drawWoodBtn(cw / 2 - btnW / 2, shopY, btnW, btnH, 'Boost Shop', false, '🛍️');
     this._registerButton(cw / 2 - btnW / 2, shopY, btnW, btnH, () => this.onOpenShop());
 
-    this._drawWoodBtn(cw / 2 - btnW / 2, lbY, btnW, btnH, 'LAGOS LEADERBOARD', false, '🏆');
+    this._drawWoodBtn(cw / 2 - btnW / 2, lbY, btnW, btnH, 'Lagos Leaderboard', false, '🏆');
     this._registerButton(cw / 2 - btnW / 2, lbY, btnW, btnH, () => this.onLeaderboard());
 
     // Cultural street rules hint
@@ -180,13 +180,14 @@ export default class UI {
     ctx.fillStyle = 'rgba(20, 14, 26, 0.94)';
     ctx.fillRect(0, 0, cw, ch);
 
+    // Header Title
     ctx.fillStyle = THEME.danfoYellow;
-    ctx.font      = `bold ${Math.round(cw * 0.08)}px ${THEME.fontDisplay}`;
+    ctx.font      = `bold ${Math.round(cw * 0.085)}px ${THEME.fontDisplay}`;
     ctx.textAlign = 'center';
     ctx.fillText('🛍️ BOOST SHOP', cw / 2, ch * 0.09);
 
     ctx.fillStyle = '#bbb';
-    ctx.font      = `${Math.round(cw * 0.035)}px ${THEME.fontBody}`;
+    ctx.font      = `${Math.round(cw * 0.036)}px ${THEME.fontBody}`;
     ctx.fillText('All boosts are clearly disclosed on run results', cw / 2, ch * 0.13);
 
     const items = [
@@ -213,9 +214,9 @@ export default class UI {
       ctx.lineWidth = 1.5;
       ctx.stroke();
 
-      // Emoji & Name
+      // Emoji & Name – clean legible font
       ctx.fillStyle = THEME.danfoYellow;
-      ctx.font      = `bold ${Math.round(cw * 0.048)}px ${THEME.fontDisplay}`;
+      ctx.font      = `bold ${Math.round(cw * 0.046)}px ${THEME.fontBody}`;
       ctx.textAlign = 'left';
       ctx.fillText(`${p.emoji} ${p.name}`, cw / 2 - cardW / 2 + 14, y + cardH * 0.32);
 
@@ -226,7 +227,7 @@ export default class UI {
 
       // Description
       ctx.fillStyle = '#ddd';
-      ctx.font      = `${Math.round(cw * 0.031)}px ${THEME.fontBody}`;
+      ctx.font      = `${Math.round(cw * 0.032)}px ${THEME.fontBody}`;
       ctx.fillText(p.desc, cw / 2 - cardW / 2 + 14, y + cardH * 0.80);
 
       // Buy button on right
@@ -243,7 +244,7 @@ export default class UI {
     const closeBtnW = cw * 0.64;
     const closeBtnH = ch * 0.065;
     const closeY = ch * 0.86;
-    this._drawWoodBtn(cw / 2 - closeBtnW / 2, closeY, closeBtnW, closeBtnH, '← BACK TO WALL', false);
+    this._drawWoodBtn(cw / 2 - closeBtnW / 2, closeY, closeBtnW, closeBtnH, '← Back to Wall', false);
     this._registerButton(cw / 2 - closeBtnW / 2, closeY, closeBtnW, closeBtnH, () => this.onCloseShop());
   }
 
@@ -266,30 +267,30 @@ export default class UI {
     ctx.fillStyle = THEME.danfoYellow;
     ctx.fillRect(0, hudH - 2, cw, 2);
 
-    // 1. Score (Chunky, legible Danfo typography on left)
+    // 1. Score (Chunky, legible typography on left)
     ctx.fillStyle = '#ffffff';
-    ctx.font      = `bold ${Math.round(cw * 0.075)}px ${THEME.fontDisplay}`;
+    ctx.font      = `bold ${Math.round(cw * 0.082)}px ${THEME.fontDisplay}`;
     ctx.textAlign = 'left';
     ctx.fillText(`${score}`, cw * 0.04, hudH * 0.62);
 
-    // Mode label under score
+    // Mode label under score – clean legible text
     ctx.fillStyle = THEME.danfoYellow;
-    ctx.font      = `bold ${Math.round(cw * 0.026)}px ${THEME.fontDisplay}`;
-    ctx.fillText(mode === 'daily' ? 'DAILY MATCH' : 'PRACTICE', cw * 0.04, hudH * 0.86);
+    ctx.font      = `bold ${Math.round(cw * 0.03)}px ${THEME.fontBody}`;
+    ctx.fillText(mode === 'daily' ? 'DAILY CHALLENGE' : 'PRACTICE', cw * 0.04, hudH * 0.86);
 
-    // 2. Multiplier & Consecutive Hit Streak (Center)
+    // 2. Multiplier & Consecutive Hit Streak (Center) – clear readable text
     if (streak >= 2) {
       ctx.fillStyle = '#ff6d00';
-      ctx.font      = `bold ${Math.round(cw * 0.042)}px ${THEME.fontDisplay}`;
+      ctx.font      = `bold ${Math.round(cw * 0.044)}px ${THEME.fontBody}`;
       ctx.textAlign = 'center';
       ctx.fillText(`STREAK 🔥 ${streak}`, cw * 0.44, hudH * 0.48);
 
       ctx.fillStyle = THEME.danfoYellow;
-      ctx.font      = `bold ${Math.round(cw * 0.034)}px ${THEME.fontDisplay}`;
-      ctx.fillText(`×${multiplier.toFixed(2)} MULTIPLIER`, cw * 0.44, hudH * 0.82);
+      ctx.font      = `bold ${Math.round(cw * 0.036)}px ${THEME.fontBody}`;
+      ctx.fillText(`×${multiplier.toFixed(2)} Multiplier`, cw * 0.44, hudH * 0.82);
     } else {
-      ctx.fillStyle = 'rgba(255,255,255,0.6)';
-      ctx.font      = `${Math.round(cw * 0.03)}px ${THEME.fontBody}`;
+      ctx.fillStyle = 'rgba(255,255,255,0.7)';
+      ctx.font      = `${Math.round(cw * 0.034)}px ${THEME.fontBody}`;
       ctx.textAlign = 'center';
       ctx.fillText('COMBO READY', cw * 0.44, hudH * 0.60);
     }
@@ -347,11 +348,11 @@ export default class UI {
       ctx.roundRect(cw * 0.04, assistY, btnW, btnH, 6);
       ctx.fill();
       ctx.fillStyle = '#fff';
-      ctx.font = `bold ${Math.round(cw * 0.03)}px ${THEME.fontDisplay}`;
+      ctx.font = `bold ${Math.round(cw * 0.032)}px ${THEME.fontBody}`;
       ctx.textAlign = 'center';
-      ctx.fillText(`🐢 SLOW ${this.powerUpState.slowTimeRemaining.toFixed(1)}s`, cw * 0.04 + btnW / 2, assistY + btnH * 0.66);
+      ctx.fillText(`🐢 Slow ${this.powerUpState.slowTimeRemaining.toFixed(1)}s`, cw * 0.04 + btnW / 2, assistY + btnH * 0.66);
     } else if (slowCount > 0) {
-      this._drawWoodBtn(cw * 0.04, assistY, btnW, btnH, `SLOW (${slowCount})`, false, '🐢');
+      this._drawWoodBtn(cw * 0.04, assistY, btnW, btnH, `Slow (${slowCount})`, false, '🐢');
       this._registerButton(cw * 0.04, assistY, btnW, btnH, () => this.onUseSlowTime());
     }
 
@@ -362,11 +363,11 @@ export default class UI {
       ctx.roundRect(cw * 0.64, assistY, btnW, btnH, 6);
       ctx.fill();
       ctx.fillStyle = '#fff';
-      ctx.font = `bold ${Math.round(cw * 0.03)}px ${THEME.fontDisplay}`;
+      ctx.font = `bold ${Math.round(cw * 0.032)}px ${THEME.fontBody}`;
       ctx.textAlign = 'center';
-      ctx.fillText('🛡 SHIELD ON', cw * 0.64 + btnW / 2, assistY + btnH * 0.66);
+      ctx.fillText('🛡 Shield ON', cw * 0.64 + btnW / 2, assistY + btnH * 0.66);
     } else if (shieldCount > 0) {
-      this._drawWoodBtn(cw * 0.64, assistY, btnW, btnH, `SHIELD (${shieldCount})`, false, '🛡');
+      this._drawWoodBtn(cw * 0.64, assistY, btnW, btnH, `Shield (${shieldCount})`, false, '🛡');
       this._registerButton(cw * 0.64, assistY, btnW, btnH, () => this.onUseBonusStones('shield'));
     }
   }
@@ -408,18 +409,18 @@ export default class UI {
       ctx.fill();
 
       ctx.fillStyle = THEME.danfoYellow;
-      ctx.font      = `bold ${Math.round(cw * 0.05)}px ${THEME.fontDisplay}`;
+      ctx.font      = `bold ${Math.round(cw * 0.046)}px ${THEME.fontBody}`;
       ctx.fillText(`USE ${tierNum}/4 · ₦${price}`, cw / 2, ch * 0.505);
 
       // Buy button
       const btnW = cw * 0.76;
       const btnH = ch * 0.075;
       const buyY = ch * 0.58;
-      this._drawWoodBtn(cw / 2 - btnW / 2, buyY, btnW, btnH, `BUY EXTRA STONE (₦${price})`, true, '⚡');
+      this._drawWoodBtn(cw / 2 - btnW / 2, buyY, btnW, btnH, `Buy Extra Stone (₦${price})`, true, '⚡');
       this._registerButton(cw / 2 - btnW / 2, buyY, btnW, btnH, () => this.onBuySecondChance());
     } else {
       ctx.fillStyle = '#ff5252';
-      ctx.font      = `bold ${Math.round(cw * 0.045)}px ${THEME.fontDisplay}`;
+      ctx.font      = `bold ${Math.round(cw * 0.042)}px ${THEME.fontBody}`;
       ctx.fillText('Maximum 4 Second Chances used for this run.', cw / 2, ch * 0.48);
     }
 
@@ -427,7 +428,7 @@ export default class UI {
     const finishW = cw * 0.76;
     const finishH = ch * 0.075;
     const finishY = ch * 0.70;
-    this._drawWoodBtn(cw / 2 - finishW / 2, finishY, finishW, finishH, 'FINISH RUN & VIEW RESULTS', false, '🏁');
+    this._drawWoodBtn(cw / 2 - finishW / 2, finishY, finishW, finishH, 'Finish Run & View Results', false, '🏁');
     this._registerButton(cw / 2 - finishW / 2, finishY, finishW, finishH, () => this.onDeclineSecondChance());
   }
 
@@ -441,20 +442,21 @@ export default class UI {
     ctx.fillStyle = 'rgba(20, 14, 25, 0.94)';
     ctx.fillRect(0, 0, cw, ch);
 
+    // Header Title in Danfo
     ctx.fillStyle = THEME.danfoYellow;
     ctx.font      = `bold ${Math.round(cw * 0.09)}px ${THEME.fontDisplay}`;
     ctx.textAlign = 'center';
     ctx.fillText('ROUND OVER!', cw / 2, ch * 0.12);
 
-    // Score
+    // Score in bold display
     ctx.fillStyle = '#ffffff';
     ctx.font      = `bold ${Math.round(cw * 0.15)}px ${THEME.fontDisplay}`;
     ctx.fillText(`${r.score || 0}`, cw / 2, ch * 0.23);
 
-    // Assists tag
+    // Assists tag – readable font
     const assistSummary = this.powerUpState.assistsSummary || { hasAssists: false, tag: '🎯 Pure Run' };
     ctx.fillStyle = assistSummary.hasAssists ? '#ffd54f' : '#81c784';
-    ctx.font      = `bold ${Math.round(cw * 0.04)}px ${THEME.fontDisplay}`;
+    ctx.font      = `bold ${Math.round(cw * 0.04)}px ${THEME.fontBody}`;
     ctx.fillText(assistSummary.tag, cw / 2, ch * 0.28);
 
     // Stats grid
@@ -482,10 +484,10 @@ export default class UI {
       ctx.fillText(`Assists used: ${assistSummary.list.join(' · ')}`, cw / 2, ch * 0.51);
     }
 
-    // Personal best notice
+    // Personal best notice – clean readable typography
     if (r.isPersonalBest) {
       ctx.fillStyle = THEME.danfoYellow;
-      ctx.font      = `bold ${Math.round(cw * 0.046)}px ${THEME.fontDisplay}`;
+      ctx.font      = `bold ${Math.round(cw * 0.046)}px ${THEME.fontBody}`;
       ctx.textAlign = 'center';
       ctx.fillText('🏆 NEW PERSONAL BEST!', cw / 2, ch * 0.57);
     }
@@ -496,13 +498,13 @@ export default class UI {
     const lbY      = ch * 0.73;
     const shopY    = ch * 0.82;
 
-    this._drawWoodBtn(cw / 2 - btnW / 2, rematchY, btnW, btnH, 'PLAY AGAIN', true, '🔁');
+    this._drawWoodBtn(cw / 2 - btnW / 2, rematchY, btnW, btnH, 'Play Again', true, '🔁');
     this._registerButton(cw / 2 - btnW / 2, rematchY, btnW, btnH, () => this.onRematch());
 
-    this._drawWoodBtn(cw / 2 - btnW / 2, lbY, btnW, btnH, 'LEADERBOARD', false, '🏆');
+    this._drawWoodBtn(cw / 2 - btnW / 2, lbY, btnW, btnH, 'Leaderboard', false, '🏆');
     this._registerButton(cw / 2 - btnW / 2, lbY, btnW, btnH, () => this.onLeaderboard());
 
-    this._drawWoodBtn(cw / 2 - btnW / 2, shopY, btnW, btnH, 'BOOST SHOP', false, '🛍️');
+    this._drawWoodBtn(cw / 2 - btnW / 2, shopY, btnW, btnH, 'Boost Shop', false, '🛍️');
     this._registerButton(cw / 2 - btnW / 2, shopY, btnW, btnH, () => this.onOpenShop());
   }
 
@@ -514,8 +516,9 @@ export default class UI {
     ctx.fillStyle = 'rgba(20, 14, 25, 0.94)';
     ctx.fillRect(0, 0, cw, ch);
 
+    // Header in Danfo
     ctx.fillStyle = THEME.danfoYellow;
-    ctx.font      = `bold ${Math.round(cw * 0.08)}px ${THEME.fontDisplay}`;
+    ctx.font      = `bold ${Math.round(cw * 0.085)}px ${THEME.fontDisplay}`;
     ctx.textAlign = 'center';
     ctx.fillText('🏆 LEADERBOARD', cw / 2, ch * 0.10);
 
@@ -540,7 +543,7 @@ export default class UI {
     // Back button
     const btnW = cw * 0.54, btnH = ch * 0.068;
     const backY = ch * 0.88;
-    this._drawWoodBtn(cw / 2 - btnW / 2, backY, btnW, btnH, '← BACK', false);
+    this._drawWoodBtn(cw / 2 - btnW / 2, backY, btnW, btnH, '← Back', false);
     this._registerButton(cw / 2 - btnW / 2, backY, btnW, btnH, () => this.onRematch());
   }
 
@@ -559,7 +562,7 @@ export default class UI {
 
     const btnW = cw * 0.56, btnH = ch * 0.075;
     const resumeY = ch * 0.54;
-    this._drawWoodBtn(cw / 2 - btnW / 2, resumeY, btnW, btnH, 'RESUME', true, '▶');
+    this._drawWoodBtn(cw / 2 - btnW / 2, resumeY, btnW, btnH, 'Resume', true, '▶');
     this._registerButton(cw / 2 - btnW / 2, resumeY, btnW, btnH, () => this.onResume());
   }
 

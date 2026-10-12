@@ -602,7 +602,7 @@ export default class Engine {
     const pw = this.wp(bw);
     const ph = this.wp(bh);
 
-    const timeLeftFrac = bottle.timeLeft / 4.0;
+    const timeLeftFrac = bottle.timeLeft / 7.0;
     drawLagosBottle(this.ctx, bx, by, pw, ph, bottle.tier, timeLeftFrac);
   }
 }

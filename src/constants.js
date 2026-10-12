@@ -12,12 +12,12 @@ export const WORLD_W = 100;      // world units across the screen
 export const WORLD_H = 216;      // world units tall (≈ 375×812 ratio)
 
 // ─── Physics ─────────────────────────────────────────────────────────────────
-export const GRAVITY        = 42;   // world units / s² (downward)
+export const GRAVITY        = 40;   // world units / s² (downward)
 export const FIXED_DT       = 1 / 120; // seconds per physics tick
-export const MAX_DRAG       = 26;   // world units – generous thumb stroke on mobile (was 14)
-export const MIN_SPEED      = 22;   // gentle minimum speed for close-up finesse
-export const MAX_SPEED      = 108;  // maximum speed needed to reach the highest bottle tier
-export const DRAG_EXPONENT  = 1.35; // progressive power curve (soft at low pull, ramps at deep pull)
+export const MAX_DRAG       = 34;   // world units – longer stroke for finer distance control (was 26)
+export const MIN_SPEED      = 20;   // gentle minimum speed for close-up finesse
+export const MAX_SPEED      = 96;   // reduced peak speed so sling is much less twitchy (was 108)
+export const DRAG_EXPONENT  = 1.15; // smooth and predictable pull-to-power response (was 1.35)
 export const ROCK_RADIUS    = 1.2;  // world units
 
 // ─── Slingshot anchor ────────────────────────────────────────────────────────
@@ -41,11 +41,11 @@ export const STREAK_BONUS   = 50;  // flat bonus points
 // stayStart: how long (s) a bottle stays at the START of the round
 // The stay time shrinks by up to 25% over the full round.
 export const TIERS = [
-  { id: 1, name: 'Close', distance: 8,  scale: 1.00, points: 10, stayStart: 4.0 },
-  { id: 2, name: 'Near',  distance: 14, scale: 0.80, points: 20, stayStart: 3.4 },
-  { id: 3, name: 'Mid',   distance: 22, scale: 0.62, points: 35, stayStart: 2.9 },
-  { id: 4, name: 'Far',   distance: 32, scale: 0.47, points: 55, stayStart: 2.4 },
-  { id: 5, name: 'Long',  distance: 45, scale: 0.35, points: 80, stayStart: 2.0 },
+  { id: 1, name: 'Close', distance: 8,  scale: 1.00, points: 10, stayStart: 8.0 },
+  { id: 2, name: 'Near',  distance: 14, scale: 0.80, points: 20, stayStart: 7.2 },
+  { id: 3, name: 'Mid',   distance: 22, scale: 0.62, points: 35, stayStart: 6.5 },
+  { id: 4, name: 'Far',   distance: 32, scale: 0.47, points: 55, stayStart: 5.8 },
+  { id: 5, name: 'Long',  distance: 45, scale: 0.35, points: 80, stayStart: 5.0 },
 ];
 
 // ─── Difficulty ramp ──────────────────────────────────────────────────────────
@@ -53,12 +53,12 @@ export const RAMP_DURATION  = 60;   // seconds over which tier weighting shifts 
 
 // ─── Trajectory preview ───────────────────────────────────────────────────────
 export const TRAJECTORY_SHOTS = Infinity;  // always show aim assist while dragging
-export const TRAJECTORY_DOTS  = 22;        // long preview arc across the screen (was 10)
+export const TRAJECTORY_DOTS  = 28;        // generous preview arc for confident distance reading (was 22)
 
 // ─── Bottle spawn timing ──────────────────────────────────────────────────────
-// One bottle at a time. Next spawns immediately after current is hit or expires.
-export const BOTTLE_STAY_MIN  = 4.5;  // seconds minimum on screen (+2s)
-export const BOTTLE_STAY_MAX  = 6.5;  // seconds maximum on screen (+2s)
+// Generous stay window so bottles don't vanish hurriedly before aiming
+export const BOTTLE_STAY_MIN  = 6.5;  // seconds minimum on screen (was 4.5)
+export const BOTTLE_STAY_MAX  = 9.5;  // seconds maximum on screen (was 6.5)
 
 // ─── Horizontal spawn zones (world units) ────────────────────────────────────
 // Three zones: left / centre / right. Bottles are placed with jitter inside each zone.

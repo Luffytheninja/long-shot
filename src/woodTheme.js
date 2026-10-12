@@ -415,9 +415,9 @@ export function drawWoodButton(ctx, x, y, w, h, text, isPrimary = false, icon = 
   ctx.roundRect(x + 2, y + 2, w - 4, h - 4, h * 0.18);
   ctx.stroke();
 
-  // Text label
+  // Text label – clean legible font with bold weight
   ctx.fillStyle = isPrimary ? '#1b120c' : '#fff9ed';
-  ctx.font = `bold ${Math.round(h * 0.42)}px ${THEME.fontDisplay}`;
+  ctx.font = `bold ${Math.round(h * 0.38)}px ${THEME.fontBody}`;
   ctx.textAlign = 'center';
   const label = icon ? `${icon}  ${text}` : text;
   ctx.fillText(label, x + w / 2, y + h * 0.64);
