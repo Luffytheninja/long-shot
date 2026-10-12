@@ -12,10 +12,12 @@ export const WORLD_W = 100;      // world units across the screen
 export const WORLD_H = 216;      // world units tall (≈ 375×812 ratio)
 
 // ─── Physics ─────────────────────────────────────────────────────────────────
-export const GRAVITY        = 38;   // world units / s²  (downward) – tuned so arc feels like a real slingshot
+export const GRAVITY        = 42;   // world units / s² (downward)
 export const FIXED_DT       = 1 / 120; // seconds per physics tick
-export const MAX_DRAG       = 14;   // world units – maximum slingshot pull
-export const LAUNCH_SCALE   = 9.5;  // multiplier: drag length → launch speed (14 × 9.5 = 133 units/s max)
+export const MAX_DRAG       = 26;   // world units – generous thumb stroke on mobile (was 14)
+export const MIN_SPEED      = 22;   // gentle minimum speed for close-up finesse
+export const MAX_SPEED      = 108;  // maximum speed needed to reach the highest bottle tier
+export const DRAG_EXPONENT  = 1.35; // progressive power curve (soft at low pull, ramps at deep pull)
 export const ROCK_RADIUS    = 1.2;  // world units
 
 // ─── Slingshot anchor ────────────────────────────────────────────────────────
@@ -51,7 +53,7 @@ export const RAMP_DURATION  = 60;   // seconds over which tier weighting shifts 
 
 // ─── Trajectory preview ───────────────────────────────────────────────────────
 export const TRAJECTORY_SHOTS = Infinity;  // always show aim assist while dragging
-export const TRAJECTORY_DOTS  = 10;        // number of preview dots
+export const TRAJECTORY_DOTS  = 22;        // long preview arc across the screen (was 10)
 
 // ─── Bottle spawn timing ──────────────────────────────────────────────────────
 // One bottle at a time. Next spawns immediately after current is hit or expires.

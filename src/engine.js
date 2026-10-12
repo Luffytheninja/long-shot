@@ -14,7 +14,7 @@
 import {
   WORLD_W, WORLD_H, GRAVITY, FIXED_DT,
   ROCK_RADIUS, SLING_X, SLING_Y, FORK_SPREAD, FORK_HEIGHT,
-  MAX_DRAG, LAUNCH_SCALE,
+  MAX_DRAG, MIN_SPEED, MAX_SPEED, DRAG_EXPONENT,
   CLR_SKY, CLR_GROUND, CLR_SHELF, CLR_BOTTLE,
   CLR_ROCK, CLR_BAND, CLR_HIT, CLR_ACCENT, CLR_UI_TEXT,
   TIERS, TRAJECTORY_SHOTS, TRAJECTORY_DOTS,
@@ -167,18 +167,31 @@ export default class Engine {
     ev('pointercancel', endDrag);
   }
 
-  _launch() {
-    // Pull vector = sling anchor − current drag position (opposite direction)
+  _getLaunchPhysics() {
+    if (!this.dragStart || !this.dragCurrent) return null;
     const pull = vSub(this.dragStart, this.dragCurrent);
-    const speed = vLen(pull) * LAUNCH_SCALE;
-    if (speed < 1) return;  // ignore accidental taps
+    const dist = vLen(pull);
+    if (dist < 1.2) return null; // Dead-zone for accidental micro-taps
 
     const dir = vNorm(pull);
+    // Normalized pull fraction (0.0 to 1.0)
+    const norm = Math.min(dist / MAX_DRAG, 1.0);
+    // Non-linear power ramp (starts soft & gentle, ramps with deep pull)
+    const powerCurve = Math.pow(norm, DRAG_EXPONENT);
+    const speed = MIN_SPEED + powerCurve * (MAX_SPEED - MIN_SPEED);
+
+    return { dir, speed, norm };
+  }
+
+  _launch() {
+    const phys = this._getLaunchPhysics();
+    if (!phys) return;
+
     this.rocks.push({
       x:  SLING_X,
       y:  SLING_Y,
-      vx: dir.x * speed,
-      vy: dir.y * speed,
+      vx: phys.dir.x * phys.speed,
+      vy: phys.dir.y * phys.speed,
       r:  ROCK_RADIUS,
       landed: false,
       hit:    false,
@@ -382,27 +395,31 @@ export default class Engine {
   }
 
   _drawTrajectory() {
-    const pull  = vSub(this.dragStart, this.dragCurrent);
-    const speed = vLen(pull) * LAUNCH_SCALE;
-    if (speed < 1) return;
-    const dir = vNorm(pull);
+    const phys = this._getLaunchPhysics();
+    if (!phys) return;
 
     let x = SLING_X, y = SLING_Y;
-    let vx = dir.x * speed, vy = dir.y * speed;
-    const dt = 0.05;
+    let vx = phys.dir.x * phys.speed, vy = phys.dir.y * phys.speed;
+    const dt = 0.04;
 
     const { ctx } = this;
     for (let i = 0; i < TRAJECTORY_DOTS; i++) {
-      // Simulate a few steps
-      for (let s = 0; s < 3; s++) {
+      // Simulate trajectory physics steps
+      for (let s = 0; s < 2; s++) {
         vy += GRAVITY * dt;
         x  += vx * dt;
         y  += vy * dt;
       }
-      const alpha = 1 - i / TRAJECTORY_DOTS;
-      ctx.globalAlpha = alpha * 0.7;
+
+      // Stop drawing if the dot goes off-screen
+      if (y > WORLD_H || x < 0 || x > WORLD_W) break;
+
+      const alpha = Math.max(0.15, 1 - (i / TRAJECTORY_DOTS) * 0.85);
+      const dotRadius = Math.max(0.5, 0.95 - (i / TRAJECTORY_DOTS) * 0.35);
+
+      ctx.globalAlpha = alpha * 0.8;
       ctx.beginPath();
-      ctx.arc(this.wx(x), this.wy(y), this.wp(0.8), 0, Math.PI * 2);
+      ctx.arc(this.wx(x), this.wy(y), this.wp(dotRadius), 0, Math.PI * 2);
       ctx.fillStyle = CLR_ACCENT;
       ctx.fill();
     }
