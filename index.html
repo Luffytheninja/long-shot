@@ -77,12 +77,20 @@
     const canvas  = document.getElementById('game-canvas');
     const loading = document.getElementById('loading');
 
-    const game = new Game(canvas);
-    await game.init();
+    const hideLoading = () => {
+      loading.classList.add('hidden');
+      setTimeout(() => loading.remove(), 500);
+    };
 
-    // Hide the loading screen once the game is ready
-    loading.classList.add('hidden');
-    setTimeout(() => loading.remove(), 500);
+    try {
+      const game = new Game(canvas);
+      await game.init();
+    } catch (err) {
+      console.error('[Long Shot] Boot error:', err);
+    } finally {
+      // Always hide the loading screen — even if init() throws
+      hideLoading();
+    }
   </script>
 </body>
 </html>

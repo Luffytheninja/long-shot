@@ -35,6 +35,7 @@ function createMock() {
     },
     async leaderboard() {
       console.log('[mock SDK] leaderboard()');
+    },
     async purchase(productId) {
       console.log(`[mock SDK] purchase(${productId}) - test item unlocked`);
       return { success: true, mock: true, productId };
