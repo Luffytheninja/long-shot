@@ -64,24 +64,42 @@ function createReal(vatarPlayer, session) {
     },
     async purchase(productId) {
       if (typeof Vatar === 'undefined') throw new Error('Vatar SDK not available');
+      console.log(`[Long Shot] Calling Vatar.purchase("${productId}")...`);
       // 1. Trigger Lagos Life purchase modal
       const result = await Vatar.purchase(productId);
-      const purchaseId = result?.purchaseId || result?.id;
-      if (!purchaseId) throw new Error('Purchase was cancelled or failed');
+      console.log('[Long Shot] Vatar.purchase result:', result);
+
+      // Support all response structures
+      const purchaseId =
+        result?.purchaseId ||
+        result?.id ||
+        result?.data?.purchaseId ||
+        result?.data?.id ||
+        (typeof result === 'string' ? result : null);
+
+      if (!purchaseId) {
+        console.warn('[Long Shot] No purchaseId returned in result:', result);
+        throw new Error('Purchase was cancelled or returned no purchaseId');
+      }
+
+      console.log(`[Long Shot] Sending /api/claim for purchaseId: ${purchaseId}...`);
 
       // 2. Deliver via server /api/claim
       const claimRes = await fetch('/api/claim', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session, purchaseId }),
+        body: JSON.stringify({ purchaseId, session }),
       });
 
       if (!claimRes.ok) {
         const err = await claimRes.text();
+        console.error('[Long Shot] Server claim error:', err);
         throw new Error(`Server claim failed: ${err}`);
       }
 
-      return await claimRes.json();
+      const claimData = await claimRes.json();
+      console.log('[Long Shot] Server claim succeeded:', claimData);
+      return claimData;
     },
     onPause(cb)  { if (typeof Vatar !== 'undefined') Vatar.onPause(cb);  },
     onResume(cb) { if (typeof Vatar !== 'undefined') Vatar.onResume(cb); },
