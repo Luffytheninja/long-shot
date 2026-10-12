@@ -148,6 +148,7 @@ export default class Game {
 
     this.engine.stop();
     this.spawn?.stop();
+    this.spawn = null;   // ← clear spawn so pause/resume know no round is active
     this.audio.playRoundEnd();
 
     const summary = this.scoring.summary();
@@ -193,13 +194,19 @@ export default class Game {
     this.engine.stop();
     this.spawn?.stop();
     this.audio.mute();
-    this.ui.setScreen('paused');
+    // Only switch to paused screen if a round is actually in progress.
+    // If we're on the start/results screen, don't hijack it.
+    if (this.spawn !== null) {
+      this.ui.setScreen('paused');
+    }
   }
 
   _resume() {
-    if (this.scoring.rocksLeft > 0 && !this.scoring.roundOver) {
+    // Only resume gameplay if a round is in progress (spawn exists and rocks remain).
+    // Otherwise fall back to the start screen so the player can begin a round properly.
+    if (this.spawn !== null && this.scoring.rocksLeft > 0 && !this.scoring.roundOver) {
       this.engine.start();
-      if (this.spawn) this.spawn.running = true;
+      this.spawn.running = true;
       this.audio.unmute();
       this.ui.setScreen('game');
     } else {
