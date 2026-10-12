@@ -1,0 +1,13 @@
+{
+  "name": "long-shot",
+  "version": "1.0.0",
+  "description": "Long Shot – slingshot arcade game for Lagos Life (Vatar Games SDK v1)",
+  "scripts": {
+    "start": "npx serve . -l 3000",
+    "lint": "npx eslint src/**/*.js",
+    "test": "echo \"No tests yet\" && exit 0"
+  },
+  "keywords": ["game", "canvas", "lagos", "slingshot"],
+  "author": "Greedy",
+  "license": "MIT"
+}

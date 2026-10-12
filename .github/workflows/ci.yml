@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install deps (if any)
+        run: |
+          if [ -f package-lock.json ]; then npm ci; fi
+
+      - name: Lint
+        run: |
+          if [ -d src ]; then npx eslint src/**/*.js --no-eslintrc -c '{"env":{"browser":true,"es2022":true},"rules":{"no-unused-vars":"warn"}}' || true; fi
+
+      - name: Test
+        run: npm test

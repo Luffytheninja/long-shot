@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#1a1a2e" />
+  <title>Long Shot</title>
+
+  <!-- Lagos Life Vatar Games SDK v1
+       Load from their CDN – never self-host a copy. -->
+  <script src="https://lagoslife.app/sdk/vatar-games-v1.js" onerror="console.warn('Vatar SDK not loaded – mock mode active')"></script>
+
+  <style>
+    /* ── Reset ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #1a1a2e;
+      /* Prevent text selection during drag */
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+    }
+
+    #game-canvas {
+      display: block;
+      /* Canvas fills the viewport; JS sets width/height to devicePixelRatio */
+      position: fixed;
+      top: 0; left: 0;
+      touch-action: none;
+    }
+
+    /* Loading screen shown until JS boots */
+    #loading {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #1a1a2e;
+      color: #ff9800;
+      font-family: "Segoe UI", sans-serif;
+      font-size: 1.5rem;
+      font-weight: bold;
+      letter-spacing: 0.08em;
+      z-index: 10;
+      transition: opacity 0.4s;
+    }
+    #loading.hidden { opacity: 0; pointer-events: none; }
+    #loading small {
+      display: block;
+      margin-top: 0.5rem;
+      color: #aaa;
+      font-size: 0.9rem;
+      font-weight: normal;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Loading splash (hidden once game boots) -->
+  <div id="loading">
+    LONG SHOT
+    <small>Loading…</small>
+  </div>
+
+  <canvas id="game-canvas"></canvas>
+
+  <!-- Game entry point – ES modules so all src/ files import cleanly -->
+  <script type="module">
+    import Game from './src/game.js';
+
+    const canvas  = document.getElementById('game-canvas');
+    const loading = document.getElementById('loading');
+
+    const game = new Game(canvas);
+    await game.init();
+
+    // Hide the loading screen once the game is ready
+    loading.classList.add('hidden');
+    setTimeout(() => loading.remove(), 500);
+  </script>
+</body>
+</html>
