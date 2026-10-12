@@ -2,24 +2,23 @@
  * engine.js – fixed-timestep physics loop, coordinate mapping, and renderer.
  *
  * World coords (100 × 216 units) are mapped to canvas pixels at runtime.
- * Call Engine.resize() whenever the canvas dimensions change.
- *
- * Usage:
- *   import Engine from './engine.js';
- *   const eng = new Engine(canvasEl);
- *   eng.start();           // begins the loop
- *   eng.stop();            // pauses the loop
+ * Unified with woodTheme for an authentic Lagos compound-wall atmosphere.
  */
 
 import {
   WORLD_W, WORLD_H, GRAVITY, FIXED_DT,
   ROCK_RADIUS, SLING_X, SLING_Y, FORK_SPREAD, FORK_HEIGHT,
   MAX_DRAG, MIN_SPEED, MAX_SPEED, DRAG_EXPONENT,
-  CLR_SKY, CLR_GROUND, CLR_SHELF, CLR_BOTTLE,
-  CLR_ROCK, CLR_BAND, CLR_HIT, CLR_ACCENT, CLR_UI_TEXT,
+  CLR_HIT, CLR_ACCENT,
   TIERS, TRAJECTORY_SHOTS, TRAJECTORY_DOTS,
-  TOTAL_ROCKS,
 } from './constants.js';
+
+import {
+  THEME,
+  drawLagosEnvironment,
+  drawWallLedge,
+  drawLagosBottle,
+} from './woodTheme.js';
 
 // ─── Vector helpers ───────────────────────────────────────────────────────────
 function vec(x, y) { return { x, y }; }
@@ -30,7 +29,7 @@ function vLen(v) { return Math.sqrt(v.x * v.x + v.y * v.y); }
 function vNorm(v) { const l = vLen(v) || 1; return vec(v.x / l, v.y / l); }
 
 // ─── Hit detection ────────────────────────────────────────────────────────────
-// Circle (rock) vs rectangle (bottle shelf area).
+// Circle (rock) vs rectangle (bottle area).
 function circleRect(cx, cy, cr, rx, ry, rw, rh) {
   const nearX = Math.max(rx, Math.min(cx, rx + rw));
   const nearY = Math.max(ry, Math.min(cy, ry + rh));
@@ -40,13 +39,13 @@ function circleRect(cx, cy, cr, rx, ry, rw, rh) {
 
 // ─── Particles ────────────────────────────────────────────────────────────────
 class Particle {
-  constructor(x, y, vx, vy, radius, colour, life) {
-    Object.assign(this, { x, y, vx, vy, radius, colour, life, maxLife: life });
+  constructor(x, y, vx, vy, radius, colour, life, type = 'glass') {
+    Object.assign(this, { x, y, vx, vy, radius, colour, life, maxLife: life, type });
   }
   update(dt) {
     this.x += this.vx * dt;
     this.y += this.vy * dt;
-    this.vy += GRAVITY * dt * 0.5;
+    this.vy += (this.type === 'dust' ? 8 : GRAVITY * 0.5) * dt;
     this.life -= dt;
   }
   get alive() { return this.life > 0; }
@@ -73,6 +72,13 @@ export default class Engine {
     this.particles  = [];
     this.shakeTime  = 0;
 
+    // Visual impact feedback ("Gbam!" floating impact labels)
+    this.impactLabels = []; // [{ text, x, y, life, maxLife, scale, color }]
+
+    // Slow-motion effect for qualifying long shots (Tier 4 & 5 hits)
+    this.slowMoTime   = 0;
+    this.slowMoFactor = 1.0;
+
     // Drag state
     this.dragging   = false;
     this.dragStart  = null;   // world coords
@@ -80,12 +86,11 @@ export default class Engine {
 
     // Running state
     this.running    = false;
-    this._raf       = null;
     this._acc       = 0;      // accumulated time for fixed step
-    this._last      = 0;
 
     // Shot counter (for trajectory preview)
     this.shotsFired = 0;
+    this.gameTime   = 0;
 
     this._bindInput();
     this.resize();
@@ -114,7 +119,6 @@ export default class Engine {
     const rect = this.canvas.getBoundingClientRect();
     const clientX = e.clientX ?? (e.touches && e.touches[0] ? e.touches[0].clientX : 0);
     const clientY = e.clientY ?? (e.touches && e.touches[0] ? e.touches[0].clientY : 0);
-    // Convert client CSS pixels directly to the canvas internal buffer resolution:
     const scaleX = this.canvas.width / rect.width;
     const scaleY = this.canvas.height / rect.height;
     return {
@@ -132,9 +136,9 @@ export default class Engine {
       e.preventDefault();
       const pos = this._getCanvasPos(e);
       const wx = this.px(pos.x), wy = this.py(pos.y);
-      // Grab radius: generous on phones (28 world units) so thumbs easily grab pouch
+      // Grab radius: generous on phones (32 world units) so thumbs easily grab pouch
       const d = vLen(vSub(vec(wx, wy), vec(SLING_X, SLING_Y)));
-      if (d < 28) {
+      if (d < 32 || wy > SLING_Y - 10) {
         this.dragging = true;
         this.dragStart   = vec(SLING_X, SLING_Y);
         this.dragCurrent = vec(wx, wy);
@@ -180,7 +184,7 @@ export default class Engine {
     const powerCurve = Math.pow(norm, DRAG_EXPONENT);
     const speed = MIN_SPEED + powerCurve * (MAX_SPEED - MIN_SPEED);
 
-    return { dir, speed, norm };
+    return { dir, speed, norm, dist };
   }
 
   _launch() {
@@ -193,6 +197,7 @@ export default class Engine {
       vx: phys.dir.x * phys.speed,
       vy: phys.dir.y * phys.speed,
       r:  ROCK_RADIUS,
+      trail: [],
       landed: false,
       hit:    false,
     });
@@ -204,53 +209,129 @@ export default class Engine {
   // ── Public API ─────────────────────────────────────────────────────────────
   setBottles(arr) { this.bottles = arr; }
 
-  spawnShatterAt(x, y, colour) {
-    for (let i = 0; i < 12; i++) {
-      const angle = (Math.PI * 2 * i) / 12 + (Math.random() * 0.5);
-      const speed = 10 + Math.random() * 18;
+  spawnShatterAt(x, y, tier) {
+    // Glass fragments in bottle green and glass sparkles
+    const colors = [THEME.bottleGlass, THEME.bottleGlassDark, '#a5d6a7', '#fff', THEME.bottleCap];
+    for (let i = 0; i < 18; i++) {
+      const angle = (Math.PI * 2 * i) / 18 + (Math.random() * 0.4);
+      const speed = 12 + Math.random() * 22;
+      const color = colors[Math.floor(Math.random() * colors.length)];
       this.particles.push(new Particle(
         x, y,
         Math.cos(angle) * speed,
-        Math.sin(angle) * speed - 5,
-        0.6 + Math.random() * 0.8,
-        colour,
-        0.6 + Math.random() * 0.4,
+        Math.sin(angle) * speed - 6,
+        0.5 + Math.random() * 1.0,
+        color,
+        0.55 + Math.random() * 0.45,
+        'glass'
       ));
     }
+
+    // Floating "Gbam!" feedback label
+    const isLongShot = tier && tier.id >= 4;
+    const label = isLongShot ? 'GBAM! 🔥' : 'GBAM!';
+    this.impactLabels.push({
+      text: label,
+      x: this.wx(x),
+      y: this.wy(y - 4),
+      life: 0.9,
+      maxLife: 0.9,
+      scale: isLongShot ? 1.3 : 1.0,
+      color: isLongShot ? THEME.danfoYellow : '#ffffff',
+    });
+
+    // Screen shake
     this.shakeTime = 0.18;
+
+    // Subtle slow-mo for long shots (Tiers 4 & 5)
+    if (isLongShot) {
+      this.slowMoTime = 0.28;
+      this.slowMoFactor = 0.4;
+    }
+  }
+
+  spawnDustAt(x, y) {
+    // Miss feedback: sand & concrete dust puff
+    const dustColors = ['rgba(160, 140, 120, 0.7)', 'rgba(120, 105, 90, 0.6)', 'rgba(210, 190, 160, 0.5)'];
+    for (let i = 0; i < 8; i++) {
+      const angle = -Math.PI * (0.2 + 0.6 * Math.random());
+      const speed = 4 + Math.random() * 9;
+      this.particles.push(new Particle(
+        x, y,
+        Math.cos(angle) * speed,
+        Math.sin(angle) * speed,
+        0.8 + Math.random() * 1.2,
+        dustColors[i % dustColors.length],
+        0.45 + Math.random() * 0.3,
+        'dust'
+      ));
+    }
+
+    // Small miss label for clear muted accessibility
+    this.impactLabels.push({
+      text: 'MISS',
+      x: this.wx(x),
+      y: this.wy(y - 2),
+      life: 0.6,
+      maxLife: 0.6,
+      scale: 0.85,
+      color: '#ff8a80',
+    });
   }
 
   start() {
-    if (this.running) return;
     this.running = true;
-    this._last   = performance.now();
-    this._loop(this._last);
+    this._acc    = 0;
   }
 
   stop() {
     this.running = false;
-    if (this._raf) cancelAnimationFrame(this._raf);
+    this.dragging = false;
+    this.dragStart = null;
+    this.dragCurrent = null;
+    this.slowMoTime = 0;
+    this.slowMoFactor = 1.0;
   }
 
-  // ── Game loop ──────────────────────────────────────────────────────────────
-  _loop(now) {
-    if (!this.running) return;
-    this._raf = requestAnimationFrame((t) => this._loop(t));
+  reset() {
+    this.rocks = [];
+    this.bottles = [];
+    this.particles = [];
+    this.impactLabels = [];
+    this.shotsFired = 0;
+    this.shakeTime = 0;
+    this.slowMoTime = 0;
+    this.slowMoFactor = 1.0;
+  }
 
-    const elapsed = Math.min((now - this._last) / 1000, 0.1); // cap at 100ms
-    this._last = now;
-    this._acc += elapsed;
+  // ── Stepped physics update (called authoritatively from Game loop) ─────────
+  update(dt) {
+    this.gameTime += dt;
+
+    // Handle slow-mo decay
+    if (this.slowMoTime > 0) {
+      this.slowMoTime -= dt;
+      if (this.slowMoTime <= 0) {
+        this.slowMoFactor = 1.0;
+      }
+    }
+
+    const effectiveDt = dt * this.slowMoFactor;
+    this._acc += effectiveDt;
 
     while (this._acc >= FIXED_DT) {
       this._tick(FIXED_DT);
       this._acc -= FIXED_DT;
     }
 
-    this._render();
+    // Update impact labels
+    for (const lbl of this.impactLabels) {
+      lbl.life -= dt;
+    }
+    this.impactLabels = this.impactLabels.filter(lbl => lbl.life > 0);
   }
 
   _tick(dt) {
-    // Screen shake decay
     if (this.shakeTime > 0) this.shakeTime -= dt;
 
     // Update rocks
@@ -259,6 +340,10 @@ export default class Engine {
       rock.vy += GRAVITY * dt;
       rock.x  += rock.vx * dt;
       rock.y  += rock.vy * dt;
+
+      // Add to restrained rock flight trail (max 6 points)
+      rock.trail.push({ x: rock.x, y: rock.y });
+      if (rock.trail.length > 6) rock.trail.shift();
 
       // Check hit against all active bottles
       for (const bottle of this.bottles) {
@@ -271,15 +356,19 @@ export default class Engine {
           bottle.hit = true;
           rock.landed = true;
           rock.hit    = true;
-          this.spawnShatterAt(bottle.x, bottle.y, CLR_HIT);
+          this.spawnShatterAt(bottle.x, bottle.y, bottle.tier);
           this.onHit(bottle.tier);
           break;
         }
       }
 
-      // Out of bounds → landed as miss
+      // Out of bounds or wall hit → landed as miss
       if (!rock.landed && (rock.y > WORLD_H + 5 || rock.x < -5 || rock.x > WORLD_W + 5)) {
         rock.landed = true;
+        // Spawn dust puff at approximate exit/wall contact
+        const clampX = Math.max(5, Math.min(WORLD_W - 5, rock.x));
+        const clampY = Math.min(WORLD_H - 8, rock.y);
+        this.spawnDustAt(clampX, clampY);
         this.onMiss();
       }
     }
@@ -293,56 +382,76 @@ export default class Engine {
   }
 
   // ── Rendering ──────────────────────────────────────────────────────────────
-  _render() {
+  render() {
     const { ctx } = this;
     const cw = this.canvas.width, ch = this.canvas.height;
 
     // Screen shake offset
     let sx = 0, sy = 0;
     if (this.shakeTime > 0) {
-      sx = (Math.random() - 0.5) * 6;
-      sy = (Math.random() - 0.5) * 6;
+      sx = (Math.random() - 0.5) * 7;
+      sy = (Math.random() - 0.5) * 7;
     }
 
     ctx.save();
     ctx.translate(sx, sy);
 
-    // Background
-    ctx.fillStyle = CLR_SKY;
-    ctx.fillRect(0, 0, cw, ch);
+    // 1. Lagos compound-wall atmosphere
+    drawLagosEnvironment(ctx, cw, ch, this.ppu, this.offX, this.offY, this.gameTime);
 
-    // Ground strip
-    ctx.fillStyle = CLR_GROUND;
-    ctx.fillRect(0, this.wy(WORLD_H - 8), cw, ch);
-
-    // Draw shelves and bottles
+    // 2. Draw shelves and bottles
     for (const bottle of this.bottles) {
       if (bottle.hit) continue;
       this._drawShelf(bottle);
       this._drawBottle(bottle);
     }
 
-    // Trajectory preview – always visible while dragging
+    // 3. Trajectory preview – visible while aiming
     if (this.dragging) {
       this._drawTrajectory();
     }
 
-    // Slingshot
+    // 4. Slingshot
     this._drawSlingshot();
 
-    // Rocks in flight
+    // 5. Rocks in flight with trail
     for (const rock of this.rocks) {
       if (rock.landed) continue;
+
+      // Restrained rock flight trail
+      if (rock.trail.length > 1) {
+        ctx.strokeStyle = 'rgba(230, 210, 190, 0.45)';
+        ctx.lineWidth = Math.max(1, this.wp(rock.r * 0.7));
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(this.wx(rock.trail[0].x), this.wy(rock.trail[0].y));
+        for (let i = 1; i < rock.trail.length; i++) {
+          ctx.lineTo(this.wx(rock.trail[i].x), this.wy(rock.trail[i].y));
+        }
+        ctx.stroke();
+      }
+
+      // Rock body with shadow & highlight
+      const rx = this.wx(rock.x);
+      const ry = this.wy(rock.y);
+      const rr = this.wp(rock.r);
+
       ctx.beginPath();
-      ctx.arc(this.wx(rock.x), this.wy(rock.y), this.wp(rock.r), 0, Math.PI * 2);
-      ctx.fillStyle = '#8d6e63';
+      ctx.arc(rx, ry, rr, 0, Math.PI * 2);
+      ctx.fillStyle = '#6d4c41';
       ctx.fill();
-      ctx.strokeStyle = '#5d4037';
-      ctx.lineWidth = 1;
+      ctx.strokeStyle = '#3e2723';
+      ctx.lineWidth = 1.2;
       ctx.stroke();
+
+      // Pebble highlight
+      ctx.fillStyle = 'rgba(255, 235, 215, 0.4)';
+      ctx.beginPath();
+      ctx.arc(rx - rr * 0.3, ry - rr * 0.3, rr * 0.4, 0, Math.PI * 2);
+      ctx.fill();
     }
 
-    // Particles
+    // 6. Particles (glass shatter / concrete dust)
     for (const p of this.particles) {
       ctx.globalAlpha = p.alpha;
       ctx.beginPath();
@@ -351,6 +460,23 @@ export default class Engine {
       ctx.fill();
     }
     ctx.globalAlpha = 1;
+
+    // 7. Impact Labels ("Gbam!", "MISS")
+    for (const lbl of this.impactLabels) {
+      const alpha = Math.max(0, lbl.life / lbl.maxLife);
+      const lift = (1 - lbl.life / lbl.maxLife) * 35;
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.font = `bold ${Math.round(cw * 0.052 * lbl.scale)}px ${THEME.fontDisplay}`;
+      ctx.textAlign = 'center';
+      // Outline for readability against wall
+      ctx.strokeStyle = '#000000';
+      ctx.lineWidth = 4;
+      ctx.strokeText(lbl.text, lbl.x, lbl.y - lift);
+      ctx.fillStyle = lbl.color;
+      ctx.fillText(lbl.text, lbl.x, lbl.y - lift);
+      ctx.restore();
+    }
 
     ctx.restore();
   }
@@ -362,36 +488,65 @@ export default class Engine {
     const lx   = this.wx(SLING_X - FORK_SPREAD);
     const rx   = this.wx(SLING_X + FORK_SPREAD);
 
-    // Stick
-    ctx.strokeStyle = CLR_BAND;
-    ctx.lineWidth   = this.wp(1.2);
-    ctx.lineCap     = 'round';
+    // Carved Iroko wooden fork with grain
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = THEME.mahoganyDark;
+    ctx.lineWidth = this.wp(1.8);
 
-    // Left prong
+    // Handle stem
+    ctx.beginPath();
+    ctx.moveTo(ax, ay + this.wp(5));
+    ctx.lineTo(ax, ay);
+    ctx.stroke();
+
+    // Wood fork prongs
+    ctx.strokeStyle = THEME.iroko;
+    ctx.lineWidth = this.wp(1.4);
     ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(lx, topY); ctx.stroke();
-    // Right prong
     ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(rx, topY); ctx.stroke();
 
-    // Band and pouch
+    // Prong tips wrap (twine wrap holding elastic)
+    ctx.strokeStyle = THEME.danfoYellow;
+    ctx.lineWidth = this.wp(0.8);
+    ctx.beginPath(); ctx.moveTo(lx - this.wp(0.8), topY); ctx.lineTo(lx + this.wp(0.8), topY); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(rx - this.wp(0.8), topY); ctx.lineTo(rx + this.wp(0.8), topY); ctx.stroke();
+
+    // Rubber band and leather pouch
     const pouch = this.dragCurrent
       ? vec(this.wx(this.dragCurrent.x), this.wy(this.dragCurrent.y))
       : vec(ax, topY + this.wp(1));
 
-    ctx.strokeStyle = '#a1887f';
-    ctx.lineWidth   = this.wp(0.5);
-    // Left band
+    // Elastic band (taut tyre rubber)
+    ctx.strokeStyle = '#8d5b4c';
+    ctx.lineWidth   = this.wp(0.7);
     ctx.beginPath(); ctx.moveTo(lx, topY); ctx.lineTo(pouch.x, pouch.y); ctx.stroke();
-    // Right band
     ctx.beginPath(); ctx.moveTo(rx, topY); ctx.lineTo(pouch.x, pouch.y); ctx.stroke();
 
-    // Pouch circle (rock)
+    // Leather pouch
+    ctx.beginPath();
+    ctx.arc(pouch.x, pouch.y, this.wp(ROCK_RADIUS * 1.3), 0, Math.PI * 2);
+    ctx.fillStyle = '#4e342e';
+    ctx.fill();
+
+    // Loaded stone inside pouch
     ctx.beginPath();
     ctx.arc(pouch.x, pouch.y, this.wp(ROCK_RADIUS), 0, Math.PI * 2);
     ctx.fillStyle = '#8d6e63';
     ctx.fill();
-    ctx.strokeStyle = '#5d4037';
+    ctx.strokeStyle = '#3e2723';
     ctx.lineWidth = 1;
     ctx.stroke();
+
+    // Generous thumb pull guide circle when idling
+    if (!this.dragging && this.running) {
+      ctx.strokeStyle = 'rgba(245, 184, 0, 0.35)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.arc(ax, ay, this.wp(14), 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
   }
 
   _drawTrajectory() {
@@ -404,40 +559,41 @@ export default class Engine {
 
     const { ctx } = this;
     for (let i = 0; i < TRAJECTORY_DOTS; i++) {
-      // Simulate trajectory physics steps
       for (let s = 0; s < 2; s++) {
         vy += GRAVITY * dt;
         x  += vx * dt;
         y  += vy * dt;
       }
 
-      // Stop drawing if the dot goes off-screen
       if (y > WORLD_H || x < 0 || x > WORLD_W) break;
 
-      const alpha = Math.max(0.15, 1 - (i / TRAJECTORY_DOTS) * 0.85);
-      const dotRadius = Math.max(0.5, 0.95 - (i / TRAJECTORY_DOTS) * 0.35);
+      const alpha = Math.max(0.2, 1 - (i / TRAJECTORY_DOTS) * 0.8);
+      const dotRadius = Math.max(0.6, 1.1 - (i / TRAJECTORY_DOTS) * 0.4);
 
-      ctx.globalAlpha = alpha * 0.8;
+      ctx.globalAlpha = alpha;
       ctx.beginPath();
       ctx.arc(this.wx(x), this.wy(y), this.wp(dotRadius), 0, Math.PI * 2);
-      ctx.fillStyle = CLR_ACCENT;
+      ctx.fillStyle = THEME.danfoYellow;
       ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+      ctx.lineWidth = 0.8;
+      ctx.stroke();
     }
     ctx.globalAlpha = 1;
   }
 
   _drawShelf(bottle) {
-    const { ctx } = this;
-    const sx    = bottle.x;
-    const sy    = bottle.y;
-    const sw    = 8  * bottle.tier.scale;
-    const sh    = 1.2 * bottle.tier.scale;
-    ctx.fillStyle = CLR_SHELF;
-    ctx.fillRect(this.wx(sx - sw / 2), this.wy(sy), this.wp(sw), this.wp(sh));
+    const sw = 8 * bottle.tier.scale;
+    const sh = 1.2 * bottle.tier.scale;
+    const sx = this.wx(bottle.x - sw / 2);
+    const sy = this.wy(bottle.y);
+    const pw = this.wp(sw);
+    const ph = this.wp(sh);
+
+    drawWallLedge(this.ctx, sx, sy, pw, ph, bottle.tier.scale);
   }
 
   _drawBottle(bottle) {
-    const { ctx } = this;
     const sc = bottle.tier.scale;
     const bw = 2.4 * sc;
     const bh = 6.0 * sc;
@@ -446,26 +602,7 @@ export default class Engine {
     const pw = this.wp(bw);
     const ph = this.wp(bh);
 
-    // Body
-    ctx.fillStyle = '#2e7d32';
-    ctx.beginPath();
-    ctx.roundRect(bx, by + ph * 0.15, pw, ph * 0.85, this.wp(sc * 0.5));
-    ctx.fill();
-
-    // Neck
-    ctx.fillStyle = '#1b5e20';
-    ctx.fillRect(bx + pw * 0.3, by, pw * 0.4, ph * 0.2);
-
-    // Highlight
-    ctx.fillStyle = 'rgba(255,255,255,0.15)';
-    ctx.fillRect(bx + pw * 0.15, by + ph * 0.2, pw * 0.2, ph * 0.5);
-
-    // Distance label (small, during development)
-    if (sc > 0.5) {
-      ctx.fillStyle = 'rgba(255,255,255,0.6)';
-      ctx.font = `${Math.round(this.wp(sc * 2))}px monospace`;
-      ctx.textAlign = 'center';
-      ctx.fillText(`L${bottle.tier.id}`, this.wx(bottle.x), this.wy(bottle.y - bh / 2));
-    }
+    const timeLeftFrac = bottle.timeLeft / 4.0;
+    drawLagosBottle(this.ctx, bx, by, pw, ph, bottle.tier, timeLeftFrac);
   }
 }

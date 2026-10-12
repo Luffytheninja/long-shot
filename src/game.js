@@ -1,8 +1,13 @@
 /**
- * game.js – top-level game controller.
+ * game.js – authoritative top-level game controller.
  *
- * Wires together: Engine, SpawnManager, Scoring, AudioEngine, UI, PowerUpManager, and SDK.
- * Manages state transitions: start ↔ shop ↔ playing ↔ clutch ↔ results ↔ leaderboard.
+ * Coordinates:
+ * - Single authoritative RAF render & tick loop.
+ * - Engine physics and Lagos environment drawing.
+ * - Seeded spawn lifecycle & distance tiers.
+ * - Scoring, combo multiplier, and 'Gbam!' feedback.
+ * - Audio synthesis & persistent sound toggle.
+ * - Power-up assists & clutch Second Chance purchase flow.
  */
 
 import Engine          from './engine.js';
@@ -39,6 +44,7 @@ export default class Game {
     this.mode     = 'daily';   // 'daily' | 'practice'
     this._audioUnlocked = false;
     this._roundEnded    = false;
+    this._clutchTimer   = null;
 
     // UI event wiring
     this.ui.onDailyChallenge      = () => { this.audio.playTap(); this._startRound('daily'); };
@@ -53,6 +59,10 @@ export default class Game {
     this.ui.onUseBonusStones      = (type) => this._activateInGameAssist(type);
     this.ui.onBuySecondChance     = () => this._handleSecondChancePurchase();
     this.ui.onDeclineSecondChance = () => { this.audio.playTap(); this._finalizeRound(); };
+    this.ui.onToggleSound         = () => this._toggleSound();
+
+    // Set initial sound mute state in UI
+    this.ui.setSoundMuted(this.audio.muted);
 
     // Unlock audio on first touch
     canvas.addEventListener('pointerdown', () => {
@@ -66,7 +76,7 @@ export default class Game {
     window.addEventListener('resize', () => this._resize());
     this._resize();
 
-    // RAF loop
+    // Single Authoritative RAF loop
     this._rafId = null;
     this._lastT = 0;
   }
@@ -79,6 +89,7 @@ export default class Game {
 
     this.ui.setPlayer(player);
     this.ui.setBestDaily(this._getBest(BEST_KEY_DAILY));
+    this.ui.setSoundMuted(this.audio.muted);
     this._syncPowerUpState();
 
     // Register platform pause/resume
@@ -88,6 +99,12 @@ export default class Game {
     // Show start screen
     this.ui.setScreen('start');
     this._startLoop();
+  }
+
+  _toggleSound() {
+    const muted = this.audio.toggleMute();
+    this.ui.setSoundMuted(muted);
+    if (!muted) this.audio.playTap();
   }
 
   _syncPowerUpState() {
@@ -111,15 +128,17 @@ export default class Game {
   // ── Round lifecycle ────────────────────────────────────────────────────────
 
   _startRound(mode) {
+    if (this._clutchTimer) {
+      clearTimeout(this._clutchTimer);
+      this._clutchTimer = null;
+    }
+
     this.mode = mode;
     this.scoring.reset();
-    this.powerups.startNewRun(); // Start new run with unique runId and clean Second Chance tier
+    this.powerups.startNewRun();
     this._syncPowerUpState();
 
-    this.engine.rocks      = [];
-    this.engine.bottles    = [];
-    this.engine.particles  = [];
-    this.engine.shotsFired = 0;
+    this.engine.reset();
 
     const seed = mode === 'daily' ? dailySeed() : practiceSeed();
     const rand = makeRng(seed);
@@ -133,11 +152,13 @@ export default class Game {
   }
 
   _onShoot() {
+    this.audio.playShoot();
     const over = this.scoring.onShoot();
     this._updateHUD();
     if (over) {
       // Last rock fired: give 2.5s for it to hit/miss before entering clutch check
-      setTimeout(() => this._checkClutchOrEnd(), 2500);
+      if (this._clutchTimer) clearTimeout(this._clutchTimer);
+      this._clutchTimer = setTimeout(() => this._checkClutchOrEnd(), 2500);
     }
   }
 
@@ -146,9 +167,9 @@ export default class Game {
     this.audio.playHit(tier.id);
     if (this.scoring.combo >= 2) this.audio.playCombo(this.scoring.combo);
 
-    const flashX = 50 + (Math.random() - 0.5) * 20;
-    const flashY = 80;
-    const comboLabel = bonus > 0 ? `+${points} BONUS!` : comboText ? `+${points} ${comboText}` : `+${points}`;
+    const flashX = 50 + (Math.random() - 0.5) * 16;
+    const flashY = 70;
+    const comboLabel = bonus > 0 ? `+${points} STREAK BONUS!` : comboText ? `+${points} (${comboText})` : `+${points}`;
     this.ui.addFlash(comboLabel, flashX, flashY, this.engine.ppu, this.engine.offX, this.engine.offY);
 
     this._updateHUD();
@@ -158,11 +179,10 @@ export default class Game {
   }
 
   _onMiss() {
-    // Check if Streak Shield protects this miss
     const protectedByShield = this.powerups.protectMiss();
     if (protectedByShield) {
       this.audio.playCombo(3);
-      this.ui.addFlash('🛡 Streak Shielded!', 50, 100, this.engine.ppu, this.engine.offX, this.engine.offY);
+      this.ui.addFlash('🛡 Streak Shielded!', 50, 90, this.engine.ppu, this.engine.offX, this.engine.offY);
     } else {
       this.audio.playMiss();
     }
@@ -178,6 +198,11 @@ export default class Game {
 
   // Offer Second Chance if rocks ran out and player hasn't capped out
   _checkClutchOrEnd() {
+    if (this._clutchTimer) {
+      clearTimeout(this._clutchTimer);
+      this._clutchTimer = null;
+    }
+
     if (this._roundEnded || this.scoring.rocksLeft > 0) return;
 
     if (this.powerups.canBuySecondChance && this.engine.shotsFired < MAX_TOTAL_SHOTS) {
@@ -219,7 +244,7 @@ export default class Game {
   _activateSlowTime() {
     if (this.powerups.activateSlowTime()) {
       this.audio.playTap();
-      this.ui.addFlash('🐢 Slow Time Active (4s)!', 50, 100, this.engine.ppu, this.engine.offX, this.engine.offY);
+      this.ui.addFlash('🐢 Slow Time Active (4s)!', 50, 90, this.engine.ppu, this.engine.offX, this.engine.offY);
       this._syncPowerUpState();
     }
   }
@@ -227,7 +252,7 @@ export default class Game {
   _activateInGameAssist(type) {
     if (type === 'shield' && this.powerups.activateStreakShield()) {
       this.audio.playTap();
-      this.ui.addFlash('🛡 Shield Ready!', 50, 100, this.engine.ppu, this.engine.offX, this.engine.offY);
+      this.ui.addFlash('🛡 Shield Active!', 50, 90, this.engine.ppu, this.engine.offX, this.engine.offY);
       this._syncPowerUpState();
     }
   }
@@ -236,17 +261,17 @@ export default class Game {
 
   async _handleProductPurchase(productId) {
     try {
-      this.ui.addFlash('Contacting Vatar Store…', 50, 100, this.engine.ppu, this.engine.offX, this.engine.offY);
+      this.ui.addFlash('Connecting to Vatar Store…', 50, 90, this.engine.ppu, this.engine.offX, this.engine.offY);
       const res = await this.sdk.purchase(productId);
       if (res?.success) {
         this.audio.playCombo(4);
         this.powerups.grantItem(productId, 1);
         this._syncPowerUpState();
-        this.ui.addFlash(`🎉 ${PRODUCTS[productId]?.name || 'Item'} Delivered!`, 50, 100, this.engine.ppu, this.engine.offX, this.engine.offY);
+        this.ui.addFlash(`🎉 ${PRODUCTS[productId]?.name || 'Item'} Delivered!`, 50, 90, this.engine.ppu, this.engine.offX, this.engine.offY);
       }
     } catch (err) {
       console.error('Purchase failed:', err);
-      this.ui.addFlash('Purchase cancelled', 50, 100, this.engine.ppu, this.engine.offX, this.engine.offY);
+      this.ui.addFlash('Purchase cancelled', 50, 90, this.engine.ppu, this.engine.offX, this.engine.offY);
     }
   }
 
@@ -254,25 +279,23 @@ export default class Game {
     try {
       const price = this.powerups.nextSecondChancePrice;
       const tierId = `second_chance_${this.powerups.secondChancesUsed + 1}`;
-      this.ui.addFlash(`Purchasing Second Chance (₦${price})…`, 50, 100, this.engine.ppu, this.engine.offX, this.engine.offY);
+      this.ui.addFlash(`Purchasing Second Chance (₦${price})…`, 50, 90, this.engine.ppu, this.engine.offX, this.engine.offY);
 
-      // Trigger purchase via Vatar SDK
       const res = await this.sdk.purchase(tierId);
       if (res?.success) {
         this.audio.playCombo(5);
         this.powerups.recordSecondChanceDelivered();
-        this.scoring.addRocks(1); // grant 1 extra shot
+        this.scoring.addRocks(1);
         this._syncPowerUpState();
-        this.ui.addFlash('⚡ +1 Shot Granted! Back to Game', 50, 100, this.engine.ppu, this.engine.offX, this.engine.offY);
+        this.ui.addFlash('⚡ +1 Stone Granted! Resuming Run', 50, 90, this.engine.ppu, this.engine.offX, this.engine.offY);
 
-        // Resume active gameplay
         this.ui.setScreen('game');
         this.engine.start();
         this._updateHUD();
       }
     } catch (err) {
       console.error('Second chance purchase failed:', err);
-      this.ui.addFlash('Purchase cancelled', 50, 100, this.engine.ppu, this.engine.offX, this.engine.offY);
+      this.ui.addFlash('Purchase cancelled', 50, 90, this.engine.ppu, this.engine.offX, this.engine.offY);
     }
   }
 
@@ -287,7 +310,6 @@ export default class Game {
   _pause() {
     this.engine.stop();
     this.spawn?.stop();
-    this.audio.mute();
     if (this.spawn !== null && this.ui.screen === 'game') {
       this.ui.setScreen('paused');
     }
@@ -297,7 +319,6 @@ export default class Game {
     if (this.spawn !== null && this.scoring.rocksLeft > 0 && !this.scoring.roundOver) {
       this.engine.start();
       this.spawn.running = true;
-      this.audio.unmute();
       this.ui.setScreen('game');
     } else {
       this.ui.setScreen('start');
@@ -310,6 +331,7 @@ export default class Game {
       score:      this.scoring.score,
       multiplier: this.scoring.multiplier,
       streak:     this.scoring.combo,
+      mode:       this.mode,
     });
   }
 
@@ -326,32 +348,45 @@ export default class Game {
     const dpr  = window.devicePixelRatio || 1;
     const vw   = window.innerWidth;
     const vh   = window.innerHeight;
-    this.canvas.width  = vw  * dpr;
-    this.canvas.height = vh  * dpr;
+    this.canvas.width  = Math.round(vw * dpr);
+    this.canvas.height = Math.round(vh * dpr);
     this.canvas.style.width  = `${vw}px`;
     this.canvas.style.height = `${vh}px`;
     this.engine.resize();
   }
 
+  // ── Unified Authoritative Rendering & Tick Loop ────────────────────────────
   _startLoop() {
     this._lastT = performance.now();
     const tick = (now) => {
       const dt = Math.min((now - this._lastT) / 1000, 0.1);
       this._lastT = now;
 
-      // Update power-up timers (Slow Time countdown)
+      // 1. Update power-up timers
       this.powerups.update(dt);
       if (this.powerups.isSlowTimeActive) {
         this._syncPowerUpState();
       }
 
-      // Update spawn manager with slowFactor applied
+      // 2. Update bottle spawning
       if (this.spawn && this.engine.running) {
         this.spawn.update(dt, this.powerups.slowFactor);
       }
 
-      // Update UI (flash texts) & render overlay
+      // 3. Update physics in engine
+      if (this.engine.running) {
+        this.engine.update(dt);
+      }
+
+      // 4. Update UI flashes
       this.ui.update(dt);
+
+      // 5. Coordinated deterministic frame rendering:
+      // (a) Clear canvas
+      this.canvas.getContext('2d').clearRect(0, 0, this.canvas.width, this.canvas.height);
+      // (b) Render game environment, bottles, slingshot, projectiles & effects
+      this.engine.render();
+      // (c) Render UI overlay (menus, HUD, modals)
       this.ui.render();
 
       this._rafId = requestAnimationFrame(tick);
