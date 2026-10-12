@@ -61,11 +61,23 @@ export default class Scoring {
 
   /**
    * Called when a rock lands without hitting a bottle.
+   * @param {boolean} protectedByShield - if true, shield prevents combo reset
    */
-  onMiss() {
-    this.combo      = 0;
-    this.multiplier = 1.0;
+  onMiss(protectedByShield = false) {
+    if (!protectedByShield) {
+      this.combo      = 0;
+      this.multiplier = 1.0;
+    }
     this.misses++;
+  }
+
+  /**
+   * Adds stones to the current round (Bonus Stones or Second Chance).
+   * @param {number} count
+   */
+  addRocks(count) {
+    this.rocksLeft += count;
+    this.roundOver = false;
   }
 
   /**

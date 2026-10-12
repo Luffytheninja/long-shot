@@ -53,10 +53,11 @@ export default class SpawnManager {
   /**
    * Call every frame with elapsed delta seconds.
    * @param {number} dt
+   * @param {number} slowFactor (optional: 0.65 for slow time, 1.0 normal)
    */
-  update(dt) {
+  update(dt, slowFactor = 1.0) {
     if (!this.running) return;
-    this.elapsed += dt;
+    this.elapsed += dt * slowFactor;
 
     if (this.active) {
       if (this.active.hit) {
@@ -64,7 +65,7 @@ export default class SpawnManager {
         this.active = null;
         this._spawn();
       } else {
-        this.active.timeLeft -= dt;
+        this.active.timeLeft -= dt * slowFactor;
         if (this.active.timeLeft <= 0) {
           // Bottle expired – spawn next immediately
           this.active = null;

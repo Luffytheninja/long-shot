@@ -80,3 +80,27 @@ export const CLR_MISS       = '#ef5350';
 export const CLR_UI_BG      = 'rgba(0,0,0,0.72)';
 export const CLR_UI_TEXT    = '#ffffff';
 export const CLR_ACCENT     = '#ff9800';
+
+// ─── Power-up product catalogue ───────────────────────────────────────────────
+// Prices are test hypotheses; verify Vatar's price limits before going live.
+export const PRODUCTS = {
+  slow_time:      { id: 'slow_time',      name: 'Slow Time',      price: 100,  emoji: '🐢', desc: 'Bottles expire 35% slower for 4 s.' },
+  bonus_stones_3: { id: 'bonus_stones_3', name: '3 Bonus Stones', price: 100,  emoji: '🪨', desc: 'Adds 3 extra shots to your next round.' },
+  streak_shield:  { id: 'streak_shield',  name: 'Streak Shield',  price: 150,  emoji: '🛡', desc: 'One miss won\'t break your combo.' },
+  second_chance:  { id: 'second_chance',  name: 'Second Chance',  price: null, emoji: '⚡', desc: 'One extra shot after your last stone. Price rises per use.' },
+};
+
+// Second Chance escalating prices (₦) — index = number already used this run
+export const SECOND_CHANCE_PRICES     = [500, 1000, 3500, 5000];
+export const MAX_SECOND_CHANCES_PER_RUN = 4;
+
+// Slow Time
+export const SLOW_TIME_DURATION  = 4.0;   // seconds the effect lasts
+export const SLOW_TIME_FACTOR    = 0.65;  // bottle countdown ticks at 65% speed (35% slower)
+
+// Bonus Stones
+export const BONUS_STONES_PER_PACK = 3;
+
+// Hard cap on total shots per run (base 15 + bonuses + second chances)
+export const MAX_TOTAL_SHOTS = 25;
+
