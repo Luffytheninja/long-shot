@@ -301,7 +301,14 @@ export default class UI {
   }
 
   _handleClick(e) {
-    const bx = e.offsetX, by = e.offsetY;
+    const rect = this.canvas.getBoundingClientRect();
+    const clientX = e.clientX ?? (e.touches && e.touches[0] ? e.touches[0].clientX : 0);
+    const clientY = e.clientY ?? (e.touches && e.touches[0] ? e.touches[0].clientY : 0);
+    const scaleX = this.canvas.width / rect.width;
+    const scaleY = this.canvas.height / rect.height;
+    const bx = (clientX - rect.left) * scaleX;
+    const by = (clientY - rect.top) * scaleY;
+
     for (const btn of this._buttons) {
       if (bx >= btn.x && bx <= btn.x + btn.w && by >= btn.y && by <= btn.y + btn.h) {
         btn.callback();

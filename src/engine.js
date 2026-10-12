@@ -110,6 +110,19 @@ export default class Engine {
   py(y) { return (y - this.offY) / this.ppu; }
 
   // ── Input ──────────────────────────────────────────────────────────────────
+  _getCanvasPos(e) {
+    const rect = this.canvas.getBoundingClientRect();
+    const clientX = e.clientX ?? (e.touches && e.touches[0] ? e.touches[0].clientX : 0);
+    const clientY = e.clientY ?? (e.touches && e.touches[0] ? e.touches[0].clientY : 0);
+    // Convert client CSS pixels directly to the canvas internal buffer resolution:
+    const scaleX = this.canvas.width / rect.width;
+    const scaleY = this.canvas.height / rect.height;
+    return {
+      x: (clientX - rect.left) * scaleX,
+      y: (clientY - rect.top) * scaleY,
+    };
+  }
+
   _bindInput() {
     const c = this.canvas;
     const ev = (name, fn) => c.addEventListener(name, fn, { passive: false });
@@ -117,21 +130,23 @@ export default class Engine {
     ev('pointerdown', (e) => {
       if (!this.running) return;
       e.preventDefault();
-      const wx = this.px(e.offsetX), wy = this.py(e.offsetY);
-      // Only start drag if near the slingshot pouch area
+      const pos = this._getCanvasPos(e);
+      const wx = this.px(pos.x), wy = this.py(pos.y);
+      // Grab radius: generous on phones (28 world units) so thumbs easily grab pouch
       const d = vLen(vSub(vec(wx, wy), vec(SLING_X, SLING_Y)));
-      if (d < 18) {
+      if (d < 28) {
         this.dragging = true;
         this.dragStart   = vec(SLING_X, SLING_Y);
         this.dragCurrent = vec(wx, wy);
-        c.setPointerCapture(e.pointerId);
+        try { c.setPointerCapture(e.pointerId); } catch (_) {}
       }
     });
 
     ev('pointermove', (e) => {
       if (!this.dragging) return;
       e.preventDefault();
-      const wx = this.px(e.offsetX), wy = this.py(e.offsetY);
+      const pos = this._getCanvasPos(e);
+      const wx = this.px(pos.x), wy = this.py(pos.y);
       // Clamp drag distance to MAX_DRAG world units
       const raw  = vSub(vec(wx, wy), this.dragStart);
       const dist = Math.min(vLen(raw), MAX_DRAG);
@@ -139,14 +154,17 @@ export default class Engine {
       this.dragCurrent = vAdd(this.dragStart, vScale(dir, dist));
     });
 
-    ev('pointerup', (e) => {
+    const endDrag = (e) => {
       if (!this.dragging) return;
       e.preventDefault();
       this._launch();
       this.dragging    = false;
       this.dragStart   = null;
       this.dragCurrent = null;
-    });
+    };
+
+    ev('pointerup', endDrag);
+    ev('pointercancel', endDrag);
   }
 
   _launch() {
