@@ -35,7 +35,9 @@ function createMock() {
     },
     async leaderboard() {
       console.log('[mock SDK] leaderboard()');
-      return { entries: [], playerRank: null };
+    async purchase(productId) {
+      console.log(`[mock SDK] purchase(${productId}) - test item unlocked`);
+      return { success: true, mock: true, productId };
     },
     onPause(cb)  { window.addEventListener('blur',  cb); },
     onResume(cb) { window.addEventListener('focus', cb); },
@@ -44,7 +46,7 @@ function createMock() {
 
 // ── Real SDK wrapper ──────────────────────────────────────────────────────────
 
-function createReal(vatarPlayer) {
+function createReal(vatarPlayer, session) {
   return {
     submitScore(n) {
       const now = Date.now();
@@ -58,6 +60,27 @@ function createReal(vatarPlayer) {
       _lastLeaderboard = now;
       if (typeof Vatar !== 'undefined') return await Vatar.leaderboard();
       return null;
+    },
+    async purchase(productId) {
+      if (typeof Vatar === 'undefined') throw new Error('Vatar SDK not available');
+      // 1. Trigger Lagos Life purchase modal
+      const result = await Vatar.purchase(productId);
+      const purchaseId = result?.purchaseId || result?.id;
+      if (!purchaseId) throw new Error('Purchase was cancelled or failed');
+
+      // 2. Deliver via server /api/claim
+      const claimRes = await fetch('/api/claim', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session, purchaseId }),
+      });
+
+      if (!claimRes.ok) {
+        const err = await claimRes.text();
+        throw new Error(`Server claim failed: ${err}`);
+      }
+
+      return await claimRes.json();
     },
     onPause(cb)  { if (typeof Vatar !== 'undefined') Vatar.onPause(cb);  },
     onResume(cb) { if (typeof Vatar !== 'undefined') Vatar.onResume(cb); },
@@ -73,10 +96,12 @@ function createReal(vatarPlayer) {
 export async function boot() {
   try {
     if (typeof Vatar === 'undefined') throw new Error('not_framed');
-    const { player } = await Vatar.init();
-    return { player, live: true, sdk: createReal(player) };
+    const initData = await Vatar.init();
+    const player = initData?.player || { id: 'unknown', name: 'Player' };
+    const session = initData?.session || null;
+    return { player, session, live: true, sdk: createReal(player, session) };
   } catch (e) {
     console.warn('[Long Shot] SDK not available – running in dev/mock mode:', e.message);
-    return { player: MOCK_PLAYER, live: false, sdk: createMock() };
+    return { player: MOCK_PLAYER, session: null, live: false, sdk: createMock() };
   }
 }

@@ -47,6 +47,7 @@ export default class Game {
     this.ui.onRematch        = () => { this.audio.playTap(); this._startRound(this.mode); };
     this.ui.onLeaderboard    = () => { this.audio.playTap(); this._showLeaderboard(); };
     this.ui.onResume         = () => { this.audio.playTap(); this._resume(); };
+    this.ui.onPurchase       = () => { this.audio.playTap(); this._handlePurchase(); };
 
     // Unlock audio on first touch
     canvas.addEventListener('pointerdown', () => {
@@ -169,6 +170,20 @@ export default class Game {
     if (this.live) {
       const data = await this.sdk.leaderboard();
       if (data) this.ui.setLeaderboard(data);
+    }
+  }
+
+  async _handlePurchase() {
+    try {
+      this.ui.addFlash('Opening store…', 50, 100, this.engine.ppu, this.engine.offX, this.engine.offY);
+      const res = await this.sdk.purchase('skin_test_100');
+      if (res?.success) {
+        this.audio.playCombo(4);
+        this.ui.addFlash('🎉 Skin Delivered!', 50, 100, this.engine.ppu, this.engine.offX, this.engine.offY);
+      }
+    } catch (err) {
+      console.error('Purchase failed:', err);
+      this.ui.addFlash('Purchase cancelled', 50, 100, this.engine.ppu, this.engine.offX, this.engine.offY);
     }
   }
 

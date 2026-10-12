@@ -25,6 +25,7 @@ export default class UI {
     this.onRematch        = () => {};
     this.onLeaderboard    = () => {};
     this.onResume         = () => {};
+    this.onPurchase       = () => {};
 
     // Data passed in
     this.hud        = { rocksLeft: TOTAL_ROCKS, score: 0, combo: 0, multiplier: 1, streak: 0 };
@@ -102,8 +103,9 @@ export default class UI {
 
     // Buttons
     const btnW = cw * 0.72, btnH = ch * 0.075;
-    const dailyY  = ch * 0.47;
-    const practY  = ch * 0.59;
+    const dailyY  = ch * 0.44;
+    const practY  = ch * 0.54;
+    const shopY   = ch * 0.64;
 
     this._drawButton(cw / 2 - btnW / 2, dailyY, btnW, btnH, '📅  Daily Challenge', CLR_ACCENT, '#000');
     this._registerButton(cw / 2 - btnW / 2, dailyY, btnW, btnH, () => this.onDailyChallenge());
@@ -111,11 +113,14 @@ export default class UI {
     this._drawButton(cw / 2 - btnW / 2, practY, btnW, btnH, '🎯  Practice', '#4caf50', '#fff');
     this._registerButton(cw / 2 - btnW / 2, practY, btnW, btnH, () => this.onPractice());
 
+    this._drawButton(cw / 2 - btnW / 2, shopY, btnW, btnH, '🛍️  Test Skin (₦100)', '#9c27b0', '#fff');
+    this._registerButton(cw / 2 - btnW / 2, shopY, btnW, btnH, () => this.onPurchase());
+
     // Rules hint
     ctx.fillStyle = '#666';
     ctx.font      = `${Math.round(cw * 0.033)}px sans-serif`;
-    ctx.fillText('Drag back the slingshot · Release to fire', cw / 2, ch * 0.74);
-    ctx.fillText('15 rocks · Hit bottles to score', cw / 2, ch * 0.78);
+    ctx.fillText('Drag back the slingshot · Release to fire', cw / 2, ch * 0.77);
+    ctx.fillText('15 rocks · Hit bottles to score', cw / 2, ch * 0.81);
   }
 
   _renderHUD() {
