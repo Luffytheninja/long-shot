@@ -55,8 +55,8 @@ export const TRAJECTORY_DOTS  = 10;        // number of preview dots
 
 // ─── Bottle spawn timing ──────────────────────────────────────────────────────
 // One bottle at a time. Next spawns immediately after current is hit or expires.
-export const BOTTLE_STAY_MIN  = 2.5;  // seconds minimum on screen
-export const BOTTLE_STAY_MAX  = 4.5;  // seconds maximum on screen
+export const BOTTLE_STAY_MIN  = 4.5;  // seconds minimum on screen (+2s)
+export const BOTTLE_STAY_MAX  = 6.5;  // seconds maximum on screen (+2s)
 
 // ─── Horizontal spawn zones (world units) ────────────────────────────────────
 // Three zones: left / centre / right. Bottles are placed with jitter inside each zone.
