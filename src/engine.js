@@ -284,8 +284,8 @@ export default class Engine {
       }
     }
 
-    // Clean up rocks that are done
-    this.rocks = this.rocks.filter(r => !r.landed || r.justLanded);
+    // Remove landed rocks
+    this.rocks = this.rocks.filter(r => !r.landed);
 
     // Particles
     for (const p of this.particles) p.update(dt);

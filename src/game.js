@@ -40,6 +40,7 @@ export default class Game {
 
     this.mode    = 'daily';   // 'daily' | 'practice'
     this._audioUnlocked = false;
+    this._roundEnded    = false;
 
     // UI event wiring
     this.ui.onDailyChallenge = () => { this.audio.playTap(); this._startRound('daily'); };
@@ -89,8 +90,9 @@ export default class Game {
   _startRound(mode) {
     this.mode = mode;
     this.scoring.reset();
-    this.engine.rocks    = [];
-    this.engine.particles= [];
+    this.engine.rocks      = [];
+    this.engine.bottles    = [];
+    this.engine.particles  = [];
     this.engine.shotsFired = 0;
 
     const seed = mode === 'daily' ? dailySeed() : practiceSeed();
