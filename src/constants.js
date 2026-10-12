@@ -12,10 +12,10 @@ export const WORLD_W = 100;      // world units across the screen
 export const WORLD_H = 216;      // world units tall (≈ 375×812 ratio)
 
 // ─── Physics ─────────────────────────────────────────────────────────────────
-export const GRAVITY        = 80;   // world units / s²  (downward)
+export const GRAVITY        = 38;   // world units / s²  (downward) – tuned so arc feels like a real slingshot
 export const FIXED_DT       = 1 / 120; // seconds per physics tick
 export const MAX_DRAG       = 14;   // world units – maximum slingshot pull
-export const LAUNCH_SCALE   = 2.6;  // multiplier: drag length → launch speed
+export const LAUNCH_SCALE   = 9.5;  // multiplier: drag length → launch speed (14 × 9.5 = 133 units/s max)
 export const ROCK_RADIUS    = 1.2;  // world units
 
 // ─── Slingshot anchor ────────────────────────────────────────────────────────
@@ -46,16 +46,25 @@ export const TIERS = [
   { id: 5, name: 'Long',  distance: 45, scale: 0.35, points: 80, stayStart: 2.0 },
 ];
 
-// ─── Spawn timing ─────────────────────────────────────────────────────────────
-export const GAP_EARLY_MIN  = 1.2;  // seconds, start of round
-export const GAP_EARLY_MAX  = 2.4;
-export const GAP_LATE_MIN   = 0.8;  // seconds, 60 s into round
-export const GAP_LATE_MAX   = 1.6;
-export const RAMP_DURATION  = 60;   // seconds over which gap narrows
+// ─── Difficulty ramp ──────────────────────────────────────────────────────────
+export const RAMP_DURATION  = 60;   // seconds over which tier weighting shifts easy→hard
 
 // ─── Trajectory preview ───────────────────────────────────────────────────────
-export const TRAJECTORY_SHOTS = 3;  // show dots only on first N shots
-export const TRAJECTORY_DOTS  = 8;  // number of preview dots
+export const TRAJECTORY_SHOTS = Infinity;  // always show aim assist while dragging
+export const TRAJECTORY_DOTS  = 10;        // number of preview dots
+
+// ─── Bottle spawn timing ──────────────────────────────────────────────────────
+// One bottle at a time. Next spawns immediately after current is hit or expires.
+export const BOTTLE_STAY_MIN  = 2.5;  // seconds minimum on screen
+export const BOTTLE_STAY_MAX  = 4.5;  // seconds maximum on screen
+
+// ─── Horizontal spawn zones (world units) ────────────────────────────────────
+// Three zones: left / centre / right. Bottles are placed with jitter inside each zone.
+export const SPAWN_ZONES = [
+  { name: 'left',   xMin: 20, xMax: 36 },
+  { name: 'centre', xMin: 43, xMax: 57 },
+  { name: 'right',  xMin: 64, xMax: 80 },
+];
 
 // ─── Colours (placeholder art) ────────────────────────────────────────────────
 export const CLR_SKY        = '#1a1a2e';

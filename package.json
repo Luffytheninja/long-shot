@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Long Shot – slingshot arcade game for Lagos Life (Vatar Games SDK v1)",
   "scripts": {
-    "start": "npx serve . -l 3000",
+    "start": "node server.js",
     "lint": "npx eslint src/**/*.js",
     "test": "echo \"No tests yet\" && exit 0"
   },

@@ -120,7 +120,7 @@ export default class Engine {
       const wx = this.px(e.offsetX), wy = this.py(e.offsetY);
       // Only start drag if near the slingshot pouch area
       const d = vLen(vSub(vec(wx, wy), vec(SLING_X, SLING_Y)));
-      if (d < 12) {
+      if (d < 18) {
         this.dragging = true;
         this.dragStart   = vec(SLING_X, SLING_Y);
         this.dragCurrent = vec(wx, wy);
@@ -291,8 +291,8 @@ export default class Engine {
       this._drawBottle(bottle);
     }
 
-    // Trajectory preview (first TRAJECTORY_SHOTS shots)
-    if (this.dragging && this.shotsFired < TRAJECTORY_SHOTS) {
+    // Trajectory preview – always visible while dragging
+    if (this.dragging) {
       this._drawTrajectory();
     }
 

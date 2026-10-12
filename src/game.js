@@ -182,7 +182,7 @@ export default class Game {
   _resume() {
     if (this.scoring.rocksLeft > 0 && !this.scoring.roundOver) {
       this.engine.start();
-      this.spawn?.running && this.spawn.start();
+      if (this.spawn) this.spawn.running = true;
       this.audio.unmute();
       this.ui.setScreen('game');
     } else {
