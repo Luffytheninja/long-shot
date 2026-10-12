@@ -15,24 +15,25 @@ Update this file whenever you finish a task or pick up from an interruption.
 - [x] package.json
 - [x] vercel.json (CSP frame-ancestors header)
 - [x] .github/workflows/ci.yml
-- [ ] Push initial commit to GitHub
+- [x] Push initial commit to GitHub
 - [ ] Get Vatar test keys from lagoslife.app/developers/keys
 - [ ] Add VATAR_TEST_SECRET to Vercel env variables
 
 ## M1 – Core Engine
 - [x] src/constants.js (all tuning values)
 - [x] src/engine.js (fixed 1/120s physics, world coords, drag/release, hit detection, particles)
+- [x] Physics tuning (increased launch speed & reduced gravity so rocks reach all tiers)
 
 ## M2 – Seeded Bottles
 - [x] src/rng.js (mulberry32, hashSeed, dailySeed, practiceSeed)
-- [x] src/spawnManager.js (tier weighting, gap ramp, stay time, sync to engine)
+- [x] src/spawnManager.js (single bottle at a time, left/centre/right biased shuffle, 2.5s-4.5s stay time)
 
 ## M3 – Scoring & Round Flow
 - [x] src/scoring.js (combo, multiplier, streak bonus, accuracy, round-end)
 
 ## M4 – Game Feel & Audio
 - [x] src/audio.js (Web Audio API synth – all sounds, no files needed)
-- [x] Trajectory preview dots (in engine.js)
+- [x] Trajectory preview dots (always-on aim assist while dragging)
 - [x] Particle shatter (in engine.js)
 - [x] Screen shake (in engine.js)
 
@@ -50,8 +51,9 @@ Update this file whenever you finish a task or pick up from an interruption.
 ## M8 – Game Controller
 - [x] src/game.js (wires all modules, round lifecycle, resize, RAF loop)
 
-## M9 – Entry Point
+## M9 – Entry Point & Dev Server
 - [x] index.html (SDK script, canvas, ES module boot)
+- [x] server.js (local lightweight dev server, running at http://localhost:3000)
 
 ## M10 – Hosting
 - [ ] Create Vercel project (vercel init or dashboard)
@@ -60,6 +62,7 @@ Update this file whenever you finish a task or pick up from an interruption.
 - [ ] Tick "SDK init seen" in dashboard
 
 ## M11 – QA
+- [~] Local testing at http://localhost:3000 (gameplay & controls verified)
 - [ ] Test on Chrome DevTools (375×812 portrait)
 - [ ] Test on real Android (touch, pause/resume, sound after first tap)
 - [ ] Fix any console errors
@@ -80,4 +83,4 @@ Update this file whenever you finish a task or pick up from an interruption.
 
 | Date/Time | Status | Notes |
 |-----------|--------|-------|
-| 2026-10-12 | All source code written | Next: push to GitHub, deploy to Vercel |
+| 2026-10-12 | Local MVP running & tuned | Aim assist always-on, 1 bottle at a time (left/centre/right). Pushed to GitHub. Next: test keys & Vercel deployment. |
